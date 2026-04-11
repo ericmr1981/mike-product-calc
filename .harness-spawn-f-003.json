@@ -1,0 +1,29 @@
+{
+  "sprintId": "f-003",
+  "task": "Feature F-003: 目标毛利率反推原料定价",
+  "role": "engineering-senior-developer",
+  "agent": {
+    "id": "engineering-senior-developer",
+    "confidence": 70,
+    "category": "engineering",
+    "file": "skills/agency-agents-lib/agents/engineering/engineering-senior-developer.md"
+  },
+  "attachments": [
+    "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/context/context-package-2026-04-11T07-09-40.md",
+    "skills/subagent-coding-lite/TEMPLATE_BRIEF.md",
+    "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/contracts/f-003.md"
+  ],
+  "contextPackagePath": "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/context/context-package-2026-04-11T07-09-40.md",
+  "attachmentTier": "standard",
+  "masterBriefPath": "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/assignments/master-brief-1775891381424.md",
+  "sprintContractPath": "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/contracts/f-003.md",
+  "dependsOn": [],
+  "matrixFlags": [
+    {
+      "flag": "SINGLE_STORY",
+      "note": "dispatch only feature F-003 in this round"
+    }
+  ],
+  "sessionId": "session_1775891381425_f-003",
+  "dispatchTime": "2026-04-11T07:09:41.425Z"
+}

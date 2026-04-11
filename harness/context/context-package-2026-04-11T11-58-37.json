@@ -1,0 +1,28 @@
+{
+  "generatedAt": "2026-04-11T11:58:37.867Z",
+  "workDir": "/Users/ericmr/Documents/GitHub/mike-product-calc",
+  "task": "sprint-2: mike-product-calc 选品组合器 + 产品多选数量填写 + 实时毛利/利润/原料需求输出；基于现有 sprint-1 骨架继续开发；技术栈：pandas + streamlit + scipy + numpy；产出：完整功能代码 + 可运行验证",
+  "profile": "standard",
+  "target": "subagent",
+  "sectionPlan": "[git, active, features, relevant] +conditional[features,contracts]",
+  "includeSections": [
+    "git",
+    "active",
+    "features",
+    "relevant"
+  ],
+  "conditionalSections": [
+    "features",
+    "contracts"
+  ],
+  "onDemandSections": [],
+  "stats": {
+    "previewCount": 0,
+    "snippetCount": 0,
+    "featuresCount": 0,
+    "contractsCount": 0,
+    "handoffsCount": 0,
+    "hasActive": false
+  },
+  "callSignature": "ContextAssembler invoked with --profile=standard --target=subagent"
+}

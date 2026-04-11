@@ -1,0 +1,8 @@
+[project]
+name = "mike-product-calc"
+version = "0.2.0"
+description = "蜜可诗产品经营决策台"
+requires-python = ">=3.9"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

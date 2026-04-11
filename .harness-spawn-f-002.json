@@ -1,0 +1,29 @@
+{
+  "sprintId": "f-002",
+  "task": "Feature F-002: SKU 毛利分析（双口径）",
+  "role": "engineering-senior-developer",
+  "agent": {
+    "id": "engineering-senior-developer",
+    "confidence": 70,
+    "category": "engineering",
+    "file": "skills/agency-agents-lib/agents/engineering/engineering-senior-developer.md"
+  },
+  "attachments": [
+    "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/context/context-package-2026-04-11T07-09-40.md",
+    "skills/subagent-coding-lite/TEMPLATE_BRIEF.md",
+    "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/contracts/f-002.md"
+  ],
+  "contextPackagePath": "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/context/context-package-2026-04-11T07-09-40.md",
+  "attachmentTier": "standard",
+  "masterBriefPath": "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/assignments/master-brief-1775891380767.md",
+  "sprintContractPath": "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/contracts/f-002.md",
+  "dependsOn": [],
+  "matrixFlags": [
+    {
+      "flag": "SINGLE_STORY",
+      "note": "dispatch only feature F-002 in this round"
+    }
+  ],
+  "sessionId": "session_1775891380768_f-002",
+  "dispatchTime": "2026-04-11T07:09:40.768Z"
+}

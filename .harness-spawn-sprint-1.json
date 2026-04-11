@@ -1,0 +1,22 @@
+{
+  "sprintId": "sprint-1",
+  "task": "看看这个项目",
+  "role": "engineering-senior-developer",
+  "agent": {
+    "id": "engineering-senior-developer",
+    "confidence": 70,
+    "category": "engineering",
+    "file": "skills/agency-agents-lib/agents/engineering/engineering-senior-developer.md"
+  },
+  "attachments": [
+    "/Users/ericmr/Documents/GitHub/.claude/harness/context/context-package-2026-04-11T06-31-03.md"
+  ],
+  "contextPackagePath": "/Users/ericmr/Documents/GitHub/.claude/harness/context/context-package-2026-04-11T06-31-03.md",
+  "attachmentTier": "minimal",
+  "masterBriefPath": "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/assignments/master-brief-1775889063534.md",
+  "sprintContractPath": "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/contracts/sprint-1.md",
+  "dependsOn": [],
+  "matrixFlags": [],
+  "sessionId": "session_1775889063535_sprint-1",
+  "dispatchTime": "2026-04-11T06:31:03.535Z"
+}

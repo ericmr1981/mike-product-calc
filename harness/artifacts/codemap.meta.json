@@ -1,0 +1,30 @@
+{
+  "commit": "6abfe348b12fde444387714be6d975a20742337f",
+  "generatedAt": 1775840541577,
+  "version": 5,
+  "trackedSrcCount": 0,
+  "langInfo": {
+    "languages": {
+      "js": 0,
+      "ts": 0,
+      "tsx": 0,
+      "py": 0,
+      "go": 0
+    },
+    "total": 0,
+    "primary": "unknown",
+    "label": "unknown",
+    "present": []
+  },
+  "invocation": {
+    "id": "20260410-170221482-81240",
+    "confirmed": true,
+    "script": "codemap.js",
+    "via": "harness.js",
+    "requestedBy": "trinity-harness",
+    "generatedAtIso": "2026-04-10T17:02:21.482Z",
+    "output": "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/artifacts/codemap.md"
+  },
+  "roleLayers": 2,
+  "docCrossRefs": 0
+}

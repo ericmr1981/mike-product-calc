@@ -1,0 +1,405 @@
+severity,sheet,rule,message,row,column
+error,产品成本计算表_Gelato,calc_error_literal,Found literal '计算错误' in column '100克成本' (7 rows),,100克成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 2, column '100克成本'",2.0,100克成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 6, column '100克成本'",6.0,100克成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 8, column '100克成本'",8.0,100克成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 11, column '100克成本'",11.0,100克成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 13, column '100克成本'",13.0,100克成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 14, column '100克成本'",14.0,100克成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 15, column '100克成本'",15.0,100克成本
+error,产品成本计算表_Gelato,calc_error_literal,Found literal '计算错误' in column '单位成本' (7 rows),,单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 2, column '单位成本'",2.0,单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 6, column '单位成本'",6.0,单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 8, column '单位成本'",8.0,单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 11, column '单位成本'",11.0,单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 13, column '单位成本'",13.0,单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 14, column '单位成本'",14.0,单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 15, column '单位成本'",15.0,单位成本
+error,产品成本计算表_Gelato,calc_error_literal,Found literal '计算错误' in column '门店单位成本' (7 rows),,门店单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 2, column '门店单位成本'",2.0,门店单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 6, column '门店单位成本'",6.0,门店单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 8, column '门店单位成本'",8.0,门店单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 11, column '门店单位成本'",11.0,门店单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 13, column '门店单位成本'",13.0,门店单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 14, column '门店单位成本'",14.0,门店单位成本
+info,产品成本计算表_Gelato,calc_error_literal_row,"计算错误 at row 15, column '门店单位成本'",15.0,门店单位成本
+warn,产品成本计算表_Gelato,non_numeric,Non-numeric values found in numeric column '100克成本' (7 rows),,100克成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 2, column '100克成本'",2.0,100克成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 6, column '100克成本'",6.0,100克成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 8, column '100克成本'",8.0,100克成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 11, column '100克成本'",11.0,100克成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 13, column '100克成本'",13.0,100克成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 14, column '100克成本'",14.0,100克成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 15, column '100克成本'",15.0,100克成本
+warn,产品成本计算表_Gelato,non_numeric,Non-numeric values found in numeric column '单位成本' (7 rows),,单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 2, column '单位成本'",2.0,单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 6, column '单位成本'",6.0,单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 8, column '单位成本'",8.0,单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 11, column '单位成本'",11.0,单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 13, column '单位成本'",13.0,单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 14, column '单位成本'",14.0,单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 15, column '单位成本'",15.0,单位成本
+warn,产品成本计算表_Gelato,non_numeric,Non-numeric values found in numeric column '门店单位成本' (7 rows),,门店单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 2, column '门店单位成本'",2.0,门店单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 6, column '门店单位成本'",6.0,门店单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 8, column '门店单位成本'",8.0,门店单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 11, column '门店单位成本'",11.0,门店单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 13, column '门店单位成本'",13.0,门店单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 14, column '门店单位成本'",14.0,门店单位成本
+info,产品成本计算表_Gelato,non_numeric_row,"Non-numeric '计算错误' at row 15, column '门店单位成本'",15.0,门店单位成本
+warn,产品配方表_Gelato,null_key,Null/empty key column '品类',76.0,品类
+warn,产品配方表_Gelato,null_key,Null/empty key column '品类',77.0,品类
+warn,产品配方表_Gelato,null_key,Null/empty key column '品类',78.0,品类
+warn,产品配方表_Gelato,null_key,Null/empty key column '品名',76.0,品名
+warn,产品配方表_Gelato,null_key,Null/empty key column '品名',77.0,品名
+warn,产品配方表_Gelato,null_key,Null/empty key column '品名',78.0,品名
+warn,产品配方表_Gelato,null_key,Null/empty key column '配料',76.0,配料
+warn,产品配方表_Gelato,null_key,Null/empty key column '配料',77.0,配料
+warn,产品配方表_Gelato,null_key,Null/empty key column '配料',78.0,配料
+info,产品配方表_Gelato,duplicate_keys,"Found duplicated keys on ['品类', '品名', '配料']; sample: [{'品类': nan, '品名': nan, '配料': nan}, {'品类': nan, '品名': nan, '配料': nan}, {'品类': nan, '品名': nan, '配料': nan}]",,
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',296.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',297.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',298.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',299.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',300.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',301.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',302.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',303.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',304.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',305.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',306.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',307.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',308.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',309.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',310.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',311.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',312.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',313.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',314.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',315.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',316.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',317.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',318.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',319.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',320.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',321.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',322.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',323.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',324.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',325.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',326.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',327.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',328.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',329.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',330.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',331.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',332.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',333.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',334.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',335.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',336.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',337.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',338.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',339.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',340.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',341.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',342.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',343.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',344.0,品类
+warn,产品出品表_Gelato,null_key,Null/empty key column '品类',345.0,品类
+info,产品出品表_Gelato,duplicate_keys,"Found duplicated keys on ['品类', '品名', '规格']; sample: [{'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '小杯'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '小杯'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '小杯'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '小杯'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '小杯'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '标准杯'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '标准杯'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '标准杯'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '标准杯'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '标准杯'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '华夫蛋筒'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '华夫蛋筒'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '华夫蛋筒'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '华夫蛋筒'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '华夫蛋筒'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '华夫碗'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '华夫碗'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '华夫碗'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '华夫碗'}, {'品类': 'Gelato', '品名': '木姜子甜橙', '规格': '华夫碗'}]",,
+warn,产品出品表_饮品,null_key,Null/empty key column '品类',2.0,品类
+warn,产品出品表_饮品,null_key,Null/empty key column '品类',3.0,品类
+warn,产品出品表_饮品,null_key,Null/empty key column '品类',4.0,品类
+info,产品出品表_饮品,duplicate_keys,"Found duplicated keys on ['品类', '品名', '规格']; sample: [{'品类': nan, '品名': '圣诞红韵无醇暖饮', '规格': '小杯'}, {'品类': nan, '品名': '圣诞红韵无醇暖饮', '规格': '小杯'}, {'品类': nan, '品名': '圣诞红韵无醇暖饮', '规格': '小杯'}]",,
+info,产品出品表_雪花冰,duplicate_keys,"Found duplicated keys on ['品类', '品名', '规格']; sample: [{'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '便携杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '便携杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '便携杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '便携杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '便携杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '便携杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '便携杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '便携杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '花瓣杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '花瓣杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '花瓣杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '花瓣杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '花瓣杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '花瓣杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '花瓣杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '花瓣杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '花瓣杯'}, {'品类': '雪花冰', '品名': '香橙牛奶冰', '规格': '花瓣杯'}, {'品类': '雪花冰', '品名': '黑芝麻牛奶冰', '规格': '便携杯'}, {'品类': '雪花冰', '品名': '黑芝麻牛奶冰', '规格': '便携杯'}]",,
+error,总原料成本表,calc_error_literal,Found literal '计算错误' in column '加价前成本' (41 rows),,加价前成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 2, column '加价前成本'",2.0,加价前成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 3, column '加价前成本'",3.0,加价前成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 4, column '加价前成本'",4.0,加价前成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 5, column '加价前成本'",5.0,加价前成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 6, column '加价前成本'",6.0,加价前成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 7, column '加价前成本'",7.0,加价前成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 8, column '加价前成本'",8.0,加价前成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 9, column '加价前成本'",9.0,加价前成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 10, column '加价前成本'",10.0,加价前成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 22, column '加价前成本'",22.0,加价前成本
+error,总原料成本表,calc_error_literal,Found literal '计算错误' in column '加价后成本' (41 rows),,加价后成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 2, column '加价后成本'",2.0,加价后成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 3, column '加价后成本'",3.0,加价后成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 4, column '加价后成本'",4.0,加价后成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 5, column '加价后成本'",5.0,加价后成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 6, column '加价后成本'",6.0,加价后成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 7, column '加价后成本'",7.0,加价后成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 8, column '加价后成本'",8.0,加价后成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 9, column '加价后成本'",9.0,加价后成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 10, column '加价后成本'",10.0,加价后成本
+info,总原料成本表,calc_error_literal_row,"计算错误 at row 22, column '加价后成本'",22.0,加价后成本
+warn,总原料成本表,null_key,Null/empty key column '品项编码',133.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',134.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',135.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',136.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',137.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',138.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',139.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',140.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',141.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',142.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',143.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',144.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',145.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',146.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',147.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',148.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',149.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',150.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',151.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',152.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',153.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',154.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',155.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',156.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',157.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',158.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',159.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',160.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',161.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',162.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',163.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',164.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',165.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',166.0,品项编码
+warn,总原料成本表,null_key,Null/empty key column '品项编码',167.0,品项编码
+info,总原料成本表,duplicate_keys,"Found duplicated keys on ['品项编码']; sample: [{'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}, {'品项编码': nan}]",,
+warn,总原料成本表,non_numeric,Non-numeric values found in numeric column '加价前成本' (41 rows),,加价前成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 2, column '加价前成本'",2.0,加价前成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 3, column '加价前成本'",3.0,加价前成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 4, column '加价前成本'",4.0,加价前成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 5, column '加价前成本'",5.0,加价前成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 6, column '加价前成本'",6.0,加价前成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 7, column '加价前成本'",7.0,加价前成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 8, column '加价前成本'",8.0,加价前成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 9, column '加价前成本'",9.0,加价前成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 10, column '加价前成本'",10.0,加价前成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 22, column '加价前成本'",22.0,加价前成本
+warn,总原料成本表,non_numeric,Non-numeric values found in numeric column '加价后成本' (41 rows),,加价后成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 2, column '加价后成本'",2.0,加价后成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 3, column '加价后成本'",3.0,加价后成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 4, column '加价后成本'",4.0,加价后成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 5, column '加价后成本'",5.0,加价后成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 6, column '加价后成本'",6.0,加价后成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 7, column '加价后成本'",7.0,加价后成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 8, column '加价后成本'",8.0,加价后成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 9, column '加价后成本'",9.0,加价后成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 10, column '加价后成本'",10.0,加价后成本
+info,总原料成本表,non_numeric_row,"Non-numeric '计算错误' at row 22, column '加价后成本'",22.0,加价后成本
+warn,产品配方表_Gelato,missing_ingredient_ref,"配料 not found in 总原料成本表.品项名称: {'海盐': 5, '水': 4}",,配料
+warn,半成品配方表_雪花冰,missing_ingredient_ref,配料 not found in 总原料成本表.品项名称: {'水': 5},,配料
+warn,半成品配方表_饮品,missing_ingredient_ref,配料 not found in 总原料成本表.品项名称: {'水': 1},,配料
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|临安山核桃|华夫碗' (present in 产品毛利表_Gelato),45.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|临安山核桃|华夫蛋筒' (present in 产品毛利表_Gelato),44.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|临安山核桃|小杯' (present in 产品毛利表_Gelato),42.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|临安山核桃|标准杯' (present in 产品毛利表_Gelato),43.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|伯爵红茶|华夫碗' (present in 产品毛利表_Gelato),17.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|伯爵红茶|华夫蛋筒' (present in 产品毛利表_Gelato),16.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|伯爵红茶|小杯' (present in 产品毛利表_Gelato),14.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|伯爵红茶|标准杯' (present in 产品毛利表_Gelato),15.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|北海道牛乳|华夫碗' (present in 产品毛利表_Gelato),89.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|北海道牛乳|华夫蛋筒' (present in 产品毛利表_Gelato),88.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|北海道牛乳|小杯' (present in 产品毛利表_Gelato),86.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|北海道牛乳|标准杯' (present in 产品毛利表_Gelato),87.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|古早黑芝麻|华夫碗' (present in 产品毛利表_Gelato),13.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|古早黑芝麻|华夫蛋筒' (present in 产品毛利表_Gelato),12.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|古早黑芝麻|小杯' (present in 产品毛利表_Gelato),10.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|古早黑芝麻|标准杯' (present in 产品毛利表_Gelato),11.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|大白兔|华夫碗' (present in 产品毛利表_Gelato),57.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|大白兔|华夫蛋筒' (present in 产品毛利表_Gelato),56.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|大白兔|小杯' (present in 产品毛利表_Gelato),54.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|大白兔|标准杯' (present in 产品毛利表_Gelato),55.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|木姜子甜橙|华夫碗' (present in 产品毛利表_Gelato),5.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|木姜子甜橙|华夫蛋筒' (present in 产品毛利表_Gelato),4.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|木姜子甜橙|小杯' (present in 产品毛利表_Gelato),2.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|木姜子甜橙|标准杯' (present in 产品毛利表_Gelato),3.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|榛子巧克力布朗尼|华夫碗' (present in 产品毛利表_Gelato),49.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|榛子巧克力布朗尼|华夫蛋筒' (present in 产品毛利表_Gelato),48.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|榛子巧克力布朗尼|小杯' (present in 产品毛利表_Gelato),46.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|榛子巧克力布朗尼|标准杯' (present in 产品毛利表_Gelato),47.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|潘那托尼|华夫碗' (present in 产品毛利表_Gelato),73.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|潘那托尼|华夫蛋筒' (present in 产品毛利表_Gelato),72.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|潘那托尼|小杯' (present in 产品毛利表_Gelato),70.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|潘那托尼|标准杯' (present in 产品毛利表_Gelato),71.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|焦糖布丁|华夫碗' (present in 产品毛利表_Gelato),65.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|焦糖布丁|华夫蛋筒' (present in 产品毛利表_Gelato),64.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|焦糖布丁|小杯' (present in 产品毛利表_Gelato),62.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|焦糖布丁|标准杯' (present in 产品毛利表_Gelato),63.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|焦糖海盐|华夫碗' (present in 产品毛利表_Gelato),53.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|焦糖海盐|华夫蛋筒' (present in 产品毛利表_Gelato),52.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|焦糖海盐|小杯' (present in 产品毛利表_Gelato),50.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|焦糖海盐|标准杯' (present in 产品毛利表_Gelato),51.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|牛轧糖|华夫碗' (present in 产品毛利表_Gelato),85.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|牛轧糖|华夫蛋筒' (present in 产品毛利表_Gelato),84.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|牛轧糖|小杯' (present in 产品毛利表_Gelato),82.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|牛轧糖|标准杯' (present in 产品毛利表_Gelato),83.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|玫瑰树莓|华夫碗' (present in 产品毛利表_Gelato),25.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|玫瑰树莓|华夫蛋筒' (present in 产品毛利表_Gelato),24.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|玫瑰树莓|小杯' (present in 产品毛利表_Gelato),22.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|玫瑰树莓|标准杯' (present in 产品毛利表_Gelato),23.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|白色恋人|华夫碗' (present in 产品毛利表_Gelato),9.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|白色恋人|华夫蛋筒' (present in 产品毛利表_Gelato),8.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|白色恋人|小杯' (present in 产品毛利表_Gelato),6.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|白色恋人|标准杯' (present in 产品毛利表_Gelato),7.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|糯米碎银子|华夫碗' (present in 产品毛利表_Gelato),77.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|糯米碎银子|华夫蛋筒' (present in 产品毛利表_Gelato),76.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|糯米碎银子|小杯' (present in 产品毛利表_Gelato),74.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|糯米碎银子|标准杯' (present in 产品毛利表_Gelato),75.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|苹果派|华夫碗' (present in 产品毛利表_Gelato),33.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|苹果派|华夫蛋筒' (present in 产品毛利表_Gelato),32.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|苹果派|小杯' (present in 产品毛利表_Gelato),30.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|苹果派|标准杯' (present in 产品毛利表_Gelato),31.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|草莓大福|华夫碗' (present in 产品毛利表_Gelato),81.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|草莓大福|华夫蛋筒' (present in 产品毛利表_Gelato),80.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|草莓大福|小杯' (present in 产品毛利表_Gelato),78.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|草莓大福|标准杯' (present in 产品毛利表_Gelato),79.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|蜂蜜海盐黑胡椒|华夫碗' (present in 产品毛利表_Gelato),69.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|蜂蜜海盐黑胡椒|华夫蛋筒' (present in 产品毛利表_Gelato),68.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|蜂蜜海盐黑胡椒|小杯' (present in 产品毛利表_Gelato),66.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|蜂蜜海盐黑胡椒|标准杯' (present in 产品毛利表_Gelato),67.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|蜜瓜味|华夫碗' (present in 产品毛利表_Gelato),21.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|蜜瓜味|华夫蛋筒' (present in 产品毛利表_Gelato),20.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|蜜瓜味|小杯' (present in 产品毛利表_Gelato),18.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|蜜瓜味|标准杯' (present in 产品毛利表_Gelato),19.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|西西里开心果|华夫碗' (present in 产品毛利表_Gelato),41.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|西西里开心果|华夫蛋筒' (present in 产品毛利表_Gelato),40.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|西西里开心果|小杯' (present in 产品毛利表_Gelato),38.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|西西里开心果|标准杯' (present in 产品毛利表_Gelato),39.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|酸奶杏子|华夫碗' (present in 产品毛利表_Gelato),61.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|酸奶杏子|华夫蛋筒' (present in 产品毛利表_Gelato),60.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|酸奶杏子|小杯' (present in 产品毛利表_Gelato),58.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|酸奶杏子|标准杯' (present in 产品毛利表_Gelato),59.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|金芒雪芭|华夫碗' (present in 产品毛利表_Gelato),29.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|金芒雪芭|华夫蛋筒' (present in 产品毛利表_Gelato),28.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|金芒雪芭|小杯' (present in 产品毛利表_Gelato),26.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|金芒雪芭|标准杯' (present in 产品毛利表_Gelato),27.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|香蕉花生脆脆|华夫碗' (present in 产品毛利表_Gelato),37.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|香蕉花生脆脆|华夫蛋筒' (present in 产品毛利表_Gelato),36.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|香蕉花生脆脆|小杯' (present in 产品毛利表_Gelato),34.0,
+error,产品成本计算表_Gelato,missing_product_row,Missing product row in 产品成本计算表_Gelato for ProductKey 'Gelato|香蕉花生脆脆|标准杯' (present in 产品毛利表_Gelato),35.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|临安山核桃 1.0|0' (present in 产品成本计算表_Gelato),14.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|临安山核桃 2.0|2304' (present in 产品成本计算表_Gelato),19.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|五常大米味1.0|2100' (present in 产品成本计算表_Gelato),32.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|伯爵红茶 1.0|2000' (present in 产品成本计算表_Gelato),7.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|内蒙奶茶 1.0|0' (present in 产品成本计算表_Gelato),6.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|北海道牛乳1.0|2100' (present in 产品成本计算表_Gelato),30.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|古早黑芝麻 1.0|2000' (present in 产品成本计算表_Gelato),5.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|大白兔 1.0|2000' (present in 产品成本计算表_Gelato),22.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|德芙巧克力味1.0|2100' (present in 产品成本计算表_Gelato),33.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|抹茶味1.0|2100' (present in 产品成本计算表_Gelato),31.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|木姜子甜橙 2.0|2180' (present in 产品成本计算表_Gelato),3.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|榛子巧克力布朗尼 1.0|0' (present in 产品成本计算表_Gelato),15.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|榛子巧克力布朗尼 2.0|2300' (present in 产品成本计算表_Gelato),20.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|泰式咸法酪 1.0|0' (present in 产品成本计算表_Gelato),11.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|潘那托尼1.0|2260' (present in 产品成本计算表_Gelato),26.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|焦糖布丁1.0|2060' (present in 产品成本计算表_Gelato),24.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|焦糖海盐 1.0|0' (present in 产品成本计算表_Gelato),2.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|焦糖海盐 2.0|2444' (present in 产品成本计算表_Gelato),21.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|牛轧糖1.0|2160' (present in 产品成本计算表_Gelato),28.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|玫瑰树莓 2.0|2190' (present in 产品成本计算表_Gelato),10.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|白色恋人 2.0|2280' (present in 产品成本计算表_Gelato),4.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|糯米碎银子1.0|2392' (present in 产品成本计算表_Gelato),27.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|苹果派 1.0|2152' (present in 产品成本计算表_Gelato),16.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|草莓大福1.0|2470' (present in 产品成本计算表_Gelato),29.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|蜂蜜海盐黑胡椒1.0|2114' (present in 产品成本计算表_Gelato),25.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|蜜瓜味 1.0|2000' (present in 产品成本计算表_Gelato),9.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|西班牙蜜瓜火腿 1.0|0' (present in 产品成本计算表_Gelato),8.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|西西里开心果 1.0|0' (present in 产品成本计算表_Gelato),13.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|西西里开心果 2.0|2162' (present in 产品成本计算表_Gelato),18.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|酸奶杏子1.0|2120' (present in 产品成本计算表_Gelato),23.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|金芒雪芭 1.0|2300' (present in 产品成本计算表_Gelato),12.0,
+warn,产品毛利表_Gelato,missing_product_row,Missing product row in 产品毛利表_Gelato for ProductKey 'Gelato|香蕉花生脆脆 1.0|2170' (present in 产品成本计算表_Gelato),17.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|临安山核桃 1.0|0' (present in 产品成本计算表_Gelato),14.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|临安山核桃 2.0|2304' (present in 产品成本计算表_Gelato),19.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|五常大米味1.0|2100' (present in 产品成本计算表_Gelato),32.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|伯爵红茶 1.0|2000' (present in 产品成本计算表_Gelato),7.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|内蒙奶茶 1.0|0' (present in 产品成本计算表_Gelato),6.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|北海道牛乳1.0|2100' (present in 产品成本计算表_Gelato),30.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|古早黑芝麻 1.0|2000' (present in 产品成本计算表_Gelato),5.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|大白兔 1.0|2000' (present in 产品成本计算表_Gelato),22.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|德芙巧克力味1.0|2100' (present in 产品成本计算表_Gelato),33.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|抹茶味1.0|2100' (present in 产品成本计算表_Gelato),31.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|木姜子甜橙 2.0|2180' (present in 产品成本计算表_Gelato),3.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|榛子巧克力布朗尼 1.0|0' (present in 产品成本计算表_Gelato),15.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|榛子巧克力布朗尼 2.0|2300' (present in 产品成本计算表_Gelato),20.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|泰式咸法酪 1.0|0' (present in 产品成本计算表_Gelato),11.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|潘那托尼1.0|2260' (present in 产品成本计算表_Gelato),26.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|焦糖布丁1.0|2060' (present in 产品成本计算表_Gelato),24.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|焦糖海盐 1.0|0' (present in 产品成本计算表_Gelato),2.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|焦糖海盐 2.0|2444' (present in 产品成本计算表_Gelato),21.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|牛轧糖1.0|2160' (present in 产品成本计算表_Gelato),28.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|玫瑰树莓 2.0|2190' (present in 产品成本计算表_Gelato),10.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|白色恋人 2.0|2280' (present in 产品成本计算表_Gelato),4.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|糯米碎银子1.0|2392' (present in 产品成本计算表_Gelato),27.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|苹果派 1.0|2152' (present in 产品成本计算表_Gelato),16.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|草莓大福1.0|2470' (present in 产品成本计算表_Gelato),29.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|蜂蜜海盐黑胡椒1.0|2114' (present in 产品成本计算表_Gelato),25.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|蜜瓜味 1.0|2000' (present in 产品成本计算表_Gelato),9.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|西班牙蜜瓜火腿 1.0|0' (present in 产品成本计算表_Gelato),8.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|西西里开心果 1.0|0' (present in 产品成本计算表_Gelato),13.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|西西里开心果 2.0|2162' (present in 产品成本计算表_Gelato),18.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|酸奶杏子1.0|2120' (present in 产品成本计算表_Gelato),23.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|金芒雪芭 1.0|2300' (present in 产品成本计算表_Gelato),12.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|香蕉花生脆脆 1.0|2170' (present in 产品成本计算表_Gelato),17.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|北海道牛乳|华夫碗' (present in 产品毛利表_Gelato),89.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|北海道牛乳|华夫蛋筒' (present in 产品毛利表_Gelato),88.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|北海道牛乳|小杯' (present in 产品毛利表_Gelato),86.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|北海道牛乳|标准杯' (present in 产品毛利表_Gelato),87.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|潘那托尼|华夫碗' (present in 产品毛利表_Gelato),73.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|潘那托尼|华夫蛋筒' (present in 产品毛利表_Gelato),72.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|潘那托尼|小杯' (present in 产品毛利表_Gelato),70.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|潘那托尼|标准杯' (present in 产品毛利表_Gelato),71.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|焦糖布丁|华夫碗' (present in 产品毛利表_Gelato),65.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|焦糖布丁|华夫蛋筒' (present in 产品毛利表_Gelato),64.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|焦糖布丁|小杯' (present in 产品毛利表_Gelato),62.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|焦糖布丁|标准杯' (present in 产品毛利表_Gelato),63.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|牛轧糖|华夫碗' (present in 产品毛利表_Gelato),85.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|牛轧糖|华夫蛋筒' (present in 产品毛利表_Gelato),84.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|牛轧糖|小杯' (present in 产品毛利表_Gelato),82.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|牛轧糖|标准杯' (present in 产品毛利表_Gelato),83.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|糯米碎银子|华夫碗' (present in 产品毛利表_Gelato),77.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|糯米碎银子|华夫蛋筒' (present in 产品毛利表_Gelato),76.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|糯米碎银子|小杯' (present in 产品毛利表_Gelato),74.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|糯米碎银子|标准杯' (present in 产品毛利表_Gelato),75.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|草莓大福|华夫碗' (present in 产品毛利表_Gelato),81.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|草莓大福|华夫蛋筒' (present in 产品毛利表_Gelato),80.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|草莓大福|小杯' (present in 产品毛利表_Gelato),78.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|草莓大福|标准杯' (present in 产品毛利表_Gelato),79.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|蜂蜜海盐黑胡椒|华夫碗' (present in 产品毛利表_Gelato),69.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|蜂蜜海盐黑胡椒|华夫蛋筒' (present in 产品毛利表_Gelato),68.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|蜂蜜海盐黑胡椒|小杯' (present in 产品毛利表_Gelato),66.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|蜂蜜海盐黑胡椒|标准杯' (present in 产品毛利表_Gelato),67.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|酸奶杏子|华夫碗' (present in 产品毛利表_Gelato),61.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|酸奶杏子|华夫蛋筒' (present in 产品毛利表_Gelato),60.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|酸奶杏子|小杯' (present in 产品毛利表_Gelato),58.0,
+warn,产品出品表_Gelato,missing_product_row,Missing product row in 产品出品表_Gelato for ProductKey 'Gelato|酸奶杏子|标准杯' (present in 产品毛利表_Gelato),59.0,
+error,产品成本计算表_雪花冰,missing_product_row,Missing product row in 产品成本计算表_雪花冰 for ProductKey '雪花冰|红豆牛乳冰|便携杯' (present in 产品毛利表_雪花冰),8.0,
+error,产品成本计算表_雪花冰,missing_product_row,Missing product row in 产品成本计算表_雪花冰 for ProductKey '雪花冰|红豆牛乳冰|花瓣杯' (present in 产品毛利表_雪花冰),9.0,
+error,产品成本计算表_雪花冰,missing_product_row,Missing product row in 产品成本计算表_雪花冰 for ProductKey '雪花冰|芭乐甜橙冰|便携杯' (present in 产品毛利表_雪花冰),6.0,
+error,产品成本计算表_雪花冰,missing_product_row,Missing product row in 产品成本计算表_雪花冰 for ProductKey '雪花冰|芭乐甜橙冰|花瓣杯' (present in 产品毛利表_雪花冰),7.0,
+error,产品成本计算表_雪花冰,missing_product_row,Missing product row in 产品成本计算表_雪花冰 for ProductKey '雪花冰|薄荷巧克力脆脆冰|便携杯' (present in 产品毛利表_雪花冰),10.0,
+error,产品成本计算表_雪花冰,missing_product_row,Missing product row in 产品成本计算表_雪花冰 for ProductKey '雪花冰|薄荷巧克力脆脆冰|花瓣杯' (present in 产品毛利表_雪花冰),11.0,
+error,产品成本计算表_雪花冰,missing_product_row,Missing product row in 产品成本计算表_雪花冰 for ProductKey '雪花冰|香橙牛奶冰|便携杯' (present in 产品毛利表_雪花冰),2.0,
+error,产品成本计算表_雪花冰,missing_product_row,Missing product row in 产品成本计算表_雪花冰 for ProductKey '雪花冰|香橙牛奶冰|花瓣杯' (present in 产品毛利表_雪花冰),3.0,
+error,产品成本计算表_雪花冰,missing_product_row,Missing product row in 产品成本计算表_雪花冰 for ProductKey '雪花冰|黑芝麻牛奶冰|便携杯' (present in 产品毛利表_雪花冰),4.0,
+error,产品成本计算表_雪花冰,missing_product_row,Missing product row in 产品成本计算表_雪花冰 for ProductKey '雪花冰|黑芝麻牛奶冰|花瓣杯' (present in 产品毛利表_雪花冰),5.0,
+warn,产品毛利表_雪花冰,missing_product_row,Missing product row in 产品毛利表_雪花冰 for ProductKey '雪花冰|奶味风味水|1150' (present in 产品成本计算表_雪花冰),6.0,
+warn,产品毛利表_雪花冰,missing_product_row,Missing product row in 产品毛利表_雪花冰 for ProductKey '雪花冰|椰味奶盖|300' (present in 产品成本计算表_雪花冰),3.0,
+warn,产品毛利表_雪花冰,missing_product_row,Missing product row in 产品毛利表_雪花冰 for ProductKey '雪花冰|橙子味风味水|330' (present in 产品成本计算表_雪花冰),2.0,
+warn,产品毛利表_雪花冰,missing_product_row,Missing product row in 产品毛利表_雪花冰 for ProductKey '雪花冰|芭乐味风味水|1210' (present in 产品成本计算表_雪花冰),4.0,
+warn,产品毛利表_雪花冰,missing_product_row,Missing product row in 产品毛利表_雪花冰 for ProductKey '雪花冰|薄荷味风味水|1210' (present in 产品成本计算表_雪花冰),7.0,
+warn,产品毛利表_雪花冰,missing_product_row,Missing product row in 产品毛利表_雪花冰 for ProductKey '雪花冰|黑芝麻味风味水|1210' (present in 产品成本计算表_雪花冰),5.0,
+warn,产品出品表_雪花冰,missing_product_row,Missing product row in 产品出品表_雪花冰 for ProductKey '雪花冰|奶味风味水|1150' (present in 产品成本计算表_雪花冰),6.0,
+warn,产品出品表_雪花冰,missing_product_row,Missing product row in 产品出品表_雪花冰 for ProductKey '雪花冰|椰味奶盖|300' (present in 产品成本计算表_雪花冰),3.0,
+warn,产品出品表_雪花冰,missing_product_row,Missing product row in 产品出品表_雪花冰 for ProductKey '雪花冰|橙子味风味水|330' (present in 产品成本计算表_雪花冰),2.0,
+warn,产品出品表_雪花冰,missing_product_row,Missing product row in 产品出品表_雪花冰 for ProductKey '雪花冰|芭乐味风味水|1210' (present in 产品成本计算表_雪花冰),4.0,
+warn,产品出品表_雪花冰,missing_product_row,Missing product row in 产品出品表_雪花冰 for ProductKey '雪花冰|薄荷味风味水|1210' (present in 产品成本计算表_雪花冰),7.0,
+warn,产品出品表_雪花冰,missing_product_row,Missing product row in 产品出品表_雪花冰 for ProductKey '雪花冰|黑芝麻味风味水|1210' (present in 产品成本计算表_雪花冰),5.0,
+warn,产品出品表_饮品,missing_product_row,Missing product row in 产品出品表_饮品 for ProductKey '饮品|热红酒茶汤|1530' (present in 产品成本计算表_饮品),2.0,

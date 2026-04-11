@@ -1,0 +1,29 @@
+{
+  "sprintId": "f-001",
+  "task": "Feature F-001: Excel 数据解析与校验（V2）",
+  "role": "engineering-senior-developer",
+  "agent": {
+    "id": "engineering-senior-developer",
+    "confidence": 70,
+    "category": "engineering",
+    "file": "skills/agency-agents-lib/agents/engineering/engineering-senior-developer.md"
+  },
+  "attachments": [
+    "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/context/context-package-2026-04-11T07-09-39.md",
+    "skills/subagent-coding-lite/TEMPLATE_BRIEF.md",
+    "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/contracts/f-001.md"
+  ],
+  "contextPackagePath": "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/context/context-package-2026-04-11T07-09-39.md",
+  "attachmentTier": "standard",
+  "masterBriefPath": "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/assignments/master-brief-1775891380118.md",
+  "sprintContractPath": "/Users/ericmr/Documents/GitHub/mike-product-calc/harness/contracts/f-001.md",
+  "dependsOn": [],
+  "matrixFlags": [
+    {
+      "flag": "SINGLE_STORY",
+      "note": "dispatch only feature F-001 in this round"
+    }
+  ],
+  "sessionId": "session_1775891380119_f-001",
+  "dispatchTime": "2026-04-11T07:09:40.119Z"
+}

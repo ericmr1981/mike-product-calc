@@ -1,0 +1,105 @@
+{
+  "name": "mike-product-calc",
+  "version": "0.2.0",
+  "description": "蜜可诗产品经营决策台：目标毛利反推定价、灵活调价模拟、按日期生产计划与备料、组合评估",
+  "features": [
+    {
+      "title": "Excel 数据解析与校验（V2）",
+      "description": "解析蜜可诗产品库.xlsx 所有13个sheet，构建内存数据模型；识别103处计算错误并输出影响范围；区分固定成本与可调成本",
+      "priority": "must",
+      "status": "done",
+      "owner": "Polo",
+      "module": "data"
+    },
+    {
+      "title": "SKU 毛利分析（双口径）",
+      "description": "单品/组合毛利展示，支持出厂口径与门店口径切换，成本瀑布图（主原料/配料/包材），与Excel交叉验证误差<0.01元",
+      "priority": "must",
+      "status": "done",
+      "note": "oracle: margin_delta + profit/cost_rmb delta CLI; real workbook deltas are data-precision/rounding issues (max 0.026 RMB)",
+      "owner": "Polo",
+      "module": "calc/profit.py + pages"
+    },
+    {
+      "title": "目标毛利率反推原料定价",
+      "description": "输入SKU+规格+目标门店毛利率，输出：目标允许成本、当前差额、可调原料建议价（理想/可接受/红线三档）；支持锁定特定原料不参与调整",
+      "priority": "must",
+      "status": "done",
+      "note": "workbook-driven cost categorisation via 总原料成本表.品项类别; three tiers; lock support confirmed on real data",
+      "owner": "Polo",
+      "module": "calc/margin_target.py + pages"
+    },
+    {
+      "title": "原料价格模拟器",
+      "description": "单原料/批量调价；保存为版本（当前/保守/理想/旺季）；对比任意两版本：毛利变化、受影响SKU、高风险产品；<3秒刷新",
+      "priority": "must",
+      "status": "done",
+      "owner": "Polo",
+      "module": "calc/material_sim.py + pages"
+    },
+    {
+      "title": "生产计划录入",
+      "description": "按日期录入SKU+规格+数量；支持Excel批量导入；支持复制历史计划；区分销量计划与生产计划；场景名管理",
+      "priority": "must",
+      "status": "done",
+      "owner": "Polo",
+      "module": "model/production.py + pages"
+    },
+    {
+      "title": "备料计划引擎（BOM展开+规则）",
+      "description": "三级BOM展开（SKU→主原料→半成品→原料）；支持损耗率、安全库存、最小采购单位、批次取整、提前期；按天/周/区间输出建议备量；<3秒",
+      "priority": "must",
+      "status": "done",
+      "owner": "Polo",
+      "module": "calc/prep_engine.py + calc/material_demand.py"
+    },
+    {
+      "title": "采购建议页",
+      "description": "基于备料计划输出：下单日期、到货日期、原料、数量、单位、来源产品；标注最晚下单日；支持导出采购单CSV",
+      "priority": "must",
+      "status": "done",
+      "owner": "Polo",
+      "module": "calc/purchase_suggestion.py + pages"
+    },
+    {
+      "title": "产品组合评估（实时联动）",
+      "description": "多选产品+填数量，实时输出总销售额/成本/毛利/净利/原料种类/产能压力；出厂/门店口径切换联动；方案A/B/C保存与对比",
+      "priority": "must",
+      "status": "done",
+      "owner": "Polo",
+      "module": "calc/profit.py + calc/scenarios.py + pages"
+    },
+    {
+      "title": "数据健康与可信度提示",
+      "description": "列出所有计算错误单元格及影响SKU/原料；标注被置零项和估算项；原料缺口预警（无有效单价时提示）；data_validation_report.csv导出",
+      "priority": "must",
+      "status": "done",
+      "owner": "Polo",
+      "module": "data/validator.py + pages"
+    },
+    {
+      "title": "多场景对比",
+      "description": "不同销量假设下的原料需求+利润对比；支持场景A/B/C命名保存；输出差异表（哪些SKU变了、哪些原料被影响）",
+      "priority": "important",
+      "status": "done",
+      "owner": "Polo",
+      "module": "calc/scenarios.py"
+    },
+    {
+      "title": "产能需求估算",
+      "description": "基于配方工时估算产能需求（V1以原料用量为主，配方工时换算留扩展）",
+      "priority": "nice-to-have",
+      "status": "done",
+      "owner": "Polo",
+      "module": "calc/capacity.py"
+    },
+    {
+      "title": "选品组合优化器",
+      "description": "输入产能/原料/销量约束，输出利润最大化产品组合推荐；提供推荐+2个备选方案+可解释原因（V1枚举，V2评估scipy）",
+      "priority": "nice-to-have",
+      "status": "done",
+      "owner": "Polo",
+      "module": "calc/optimizer.py"
+    }
+  ]
+}
