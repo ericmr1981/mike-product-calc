@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sys
 import tempfile
+from datetime import date, timedelta
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -15,7 +17,9 @@ import streamlit as st
 from mike_product_calc.calc.material_sim import (
     MaterialCatalog,
     Scenario,
+    ScenarioStore,
     SkuCostInfo,
+    MaterialPriceAdjustment,
     apply_scenario_to_sku_costs,
     build_sku_cost_table,
     compare_scenarios,
@@ -54,6 +58,7 @@ from mike_product_calc.calc.optimizer import (
 )
 from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.data.validator import issues_to_dataframe, validate_workbook
+from mike_product_calc.data.shared import build_product_key
 from mike_product_calc.model.production import ProductionPlan, ProductionRow
 
 
@@ -66,14 +71,43 @@ import os as _os
 _default_xlsx = _os.environ.get("MIKE_DEFAULT_XLSX", "")
 if _default_xlsx:
     import io
-    _xlsx_path = Path(_default_xlsx)
-    uploaded = io.BytesIO(_xlsx_path.read_bytes()) if _xlsx_path.exists() else st.file_uploader("上传 蜜可诗产品库.xlsx", type=["xlsx"])
+
+# ── 上传文件持久化（session 级）──────────────────────────────────────
+_default_file_persistent = st.session_state.get("_uploaded_bytes")
+_default_file_name = st.session_state.get("_uploaded_name", "")
+
+if _default_file_persistent:
+    _default_bytes = io.BytesIO(_default_file_persistent)
+    _default_bytes.name = _default_file_name
+    _default_file_widget = st.file_uploader(
+        "📂 上传/更新 蜜可诗产品库.xlsx",
+        type=["xlsx"],
+        key="xlsx_upload",
+    )
 else:
-    uploaded = st.file_uploader("上传 蜜可诗产品库.xlsx", type=["xlsx"])
+    _default_file_widget = None
+    _default_file_widget = st.file_uploader("📂 上传 蜜可诗产品库.xlsx", type=["xlsx"], key="xlsx_upload")
+
+uploaded = _default_file_widget
+
+if uploaded:
+    st.session_state["_uploaded_bytes"] = uploaded.getvalue()
+    st.session_state["_uploaded_name"] = getattr(uploaded, "name", "workbook.xlsx")
 
 if not uploaded:
-    st.info("请上传 xlsx 文件开始。")
-    st.stop()
+    if _default_file_persistent:
+        st.info("已加载上次会话的文件。如需更换，请重新上传。")
+        uploaded = io.BytesIO(_default_file_persistent)
+        uploaded.name = _default_file_name
+    else:
+        # Fallback: auto-load from MIKE_DEFAULT_XLSX env var
+        _default_xlsx = os.environ.get("MIKE_DEFAULT_XLSX", "")
+        if _default_xlsx and Path(_default_xlsx).exists():
+            uploaded = io.BytesIO(Path(_default_xlsx).read_bytes())
+            uploaded.name = Path(_default_xlsx).name
+        else:
+            st.info("请上传 xlsx 文件开始（文件会在当前会话中保留，无需重复上传）。")
+            st.stop()
 
 
 @st.cache_data(show_spinner=False)
@@ -91,9 +125,17 @@ with st.spinner("解析中..."):
 
 sheet_names = list(wb.sheets.keys())
 
+# ── Tab4 状态初始化（原料价格模拟器 session 级存储）─────────────────────
+if "sim_store" not in st.session_state:
+    st.session_state["sim_store"] = ScenarioStore()
+
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(["概览/校验", "SKU 毛利分析（双口径）", "Sheet 浏览", "原料价格模拟器", "生产计划录入", "备料计划", "采购建议", "产品组合评估", "多场景对比", "选品优化器", "产能需求估算"])
 
 with tab1:
+    st.info("📌 **功能说明**：上传 Excel 文件后，系统自动解析并校验所有 sheet。\n"
+             "**使用方法**：上传蜜可诗产品库.xlsx，等待解析完成后查看统计与校验报告。\n"
+             "**字段含义**：Sheet 数 = 工作簿中 sheet 总数；Issues = 所有校验问题数（含警告）；"
+             "Errors = 高严重性问题（需优先处理）。")
     st.subheader("Workbook 概览")
     col1, col2, col3 = st.columns(3)
     col1.metric("Sheet 数", len(sheet_names))
@@ -115,6 +157,10 @@ with tab1:
     )
 
 with tab2:
+    st.info("📌 **功能说明**：查看所有上线 SKU 的毛利数据，支持出厂/门店双口径切换。\n"
+             "**使用方法**：选择口径和状态过滤，查看毛利表；切换 Tab 查看成本瀑布或目标成本反推。\n"
+             "**字段含义**：price=定价；cost=出厂成本；store_cost=门店成本；gross_profit=毛利额；"
+             "gross_margin=毛利率（%）。")
     st.subheader("SKU 毛利分析（双口径）")
     st.caption("口径说明：出厂口径=定价-成本；门店口径=定价-门店成本（以产品毛利表为数据源）。")
 
@@ -222,17 +268,126 @@ with tab2:
                 )
 
 with tab3:
+    st.info("📌 **功能说明**：浏览工作簿中任意 sheet 的原始数据。\n"
+             "**使用方法**：下拉选择 sheet 名称，查看行列数据。\n"
+             "**字段含义**：Rows=数据行数；Cols=列数；表格内容即对应 sheet 的原始数据。")
     st.subheader("Sheet 浏览")
     selected = st.selectbox("选择 sheet", sheet_names)
     df = wb.sheets[selected]
     st.write(f"Rows: {df.shape[0]} | Cols: {df.shape[1]}")
     st.dataframe(df.head(200), use_container_width=True, height=420)
 
+# ── Tab4: 原料价格模拟器 ───────────────────────────────────────────────
+
+store: ScenarioStore = st.session_state["sim_store"]
+
+with tab4:
+    st.info("📌 **功能说明**：调整原料单价，实时预览毛利变化，保存调价版本并与基准对比。\n"
+             "**使用方法**：选择或新建版本 → 添加调价原料+新单价 → 保存 → 与其他版本对比。\n"
+             "**字段含义**：原料=来自总原料成本表；新单价=调整后的采购价；"
+             "高风险=SKU 调整后毛利<0（标红）。")
+    st.subheader("原料价格模拟器（F-004）")
+    st.caption("调整原料单价 → 实时重算毛利 → 保存版本 → 对比任意两版本差异")
+
+    # ── Version management ──────────────────────────────────────────
+    existing = store.list_names()
+    default_choice = "（新建版本）"
+    choice = st.selectbox("选择版本", [default_choice] + existing)
+    version_name = st.text_input("新版本名称").strip() if choice == default_choice else choice
+
+    current = store.get(version_name) if version_name else None
+    adj_items = [(a.item, a.new_unit_price) for a in current.adjustments] if current else []
+
+    # Build ingredient list
+    raw_df = wb.sheets.get("总原料成本表")
+    price_col = next((c for c in raw_df.columns if "单价" in c), None) if raw_df is not None else None
+    name_col = next((c for c in raw_df.columns if "品项名称" in c), None) if raw_df is not None else None
+    ingredient_options = (
+        sorted({str(r.get(name_col, "")).strip() for *_, r in raw_df.iterrows() if str(r.get(name_col, "")).strip()})
+        if raw_df is not None and price_col and name_col else []
+    )
+
+    # ── Adjustment editor ────────────────────────────────────────────
+    st.markdown("##### 调价明细")
+    n = st.number_input("调价原料数", min_value=0, max_value=20, value=len(adj_items), step=1)
+    adjustments: List[MaterialPriceAdjustment] = []
+    for i in range(int(n)):
+        col1, col2 = st.columns([3, 1])
+        item_name = col1.selectbox(
+            f"原料 #{i+1}", options=ingredient_options,
+            index=ingredient_options.index(adj_items[i][0]) if i < len(adj_items) and adj_items[i][0] in ingredient_options else 0,
+        )
+        new_price = col2.number_input("新单价", value=adj_items[i][1] if i < len(adj_items) else 0.0, step=0.01, format="%.4f", key=f"sim_price_{i}")
+        if item_name and new_price > 0:
+            adjustments.append(MaterialPriceAdjustment(item=item_name, new_unit_price=new_price))
+
+    sim_basis = st.radio("口径", ["store", "factory"], format_func=lambda x: "门店口径" if x == "store" else "出厂口径", horizontal=True)
+
+    # Save / clear
+    col_save, col_clear = st.columns(2)
+    if col_save.button("💾 保存版本", disabled=not (version_name and adjustments)):
+        store.put(Scenario(name=version_name, adjustments=tuple(adjustments)))
+        st.success(f"已保存版本：{version_name}")
+        st.rerun()
+    if col_clear.button("🗑 清空所有版本"):
+        store.clear()
+        st.rerun()
+
+    # ── Comparison ──────────────────────────────────────────────────
+    st.divider()
+    st.markdown("##### 版本对比")
+    names = store.list_names()
+    if len(names) >= 2:
+        c_a, c_b = st.columns(2)
+        with c_a:
+            va = st.selectbox("版本 A", names, key="cmp_a")
+        with c_b:
+            vb = st.selectbox("版本 B", names, index=min(1, len(names)-1), key="cmp_b")
+        if st.button("🔍 对比两版本"):
+            s_a, s_b = store.get(va), store.get(vb)
+            if s_a and s_b:
+                diff = compare_scenarios(s_a, s_b, wb.sheets, basis=sim_basis)
+                st.dataframe(diff, use_container_width=True, height=420)
+                st.download_button(f"下载 {va}_vs_{vb}.csv", data=diff.to_csv(index=False).encode("utf-8"),
+                                   file_name=f"sim_{va}_vs_{vb}.csv", mime="text/csv")
+    elif len(names) == 1:
+        s1 = store.get(names[0])
+        if s1:
+            st.markdown(f"**{names[0]}** vs 基准（原始数据）")
+            from mike_product_calc.calc.material_sim import Scenario as BaseScenario
+            diff = compare_scenarios(BaseScenario(name="基准", adjustments=()), s1, wb.sheets, basis=sim_basis)
+            st.dataframe(diff, use_container_width=True, height=420)
+            st.download_button(f"下载 {names[0]}_vs_baseline.csv", data=diff.to_csv(index=False).encode("utf-8"),
+                               file_name=f"sim_{names[0]}_vs_baseline.csv", mime="text/csv")
+    else:
+        st.info("保存至少一个版本后即可进行对比分析。")
+
+    # List saved versions
+    if names:
+        st.divider()
+        st.markdown("##### 已保存版本")
+        for nm in names:
+            sc = store.get(nm)
+            adj_list = [f"{a.item} → {a.new_unit_price}" for a in (sc.adjustments if sc else [])]
+            st.markdown(f"**{nm}**（{len(adj_list)} 项调价）：{', '.join(adj_list) if adj_list else '（无调整）'}")
+
 # ── Tab5: 生产计划录入 ────────────────────────────────────────────────
 
 # Build SKU list from workbook for dropdown
 _profit_df = sku_profit_table(wb.sheets, basis="factory", only_status=None)
 _all_skus = sorted(_profit_df["product_key"].dropna().unique().tolist())
+
+# SKU pool for production plan: from 产品出品表 (ingredients/outputs of production line)
+_out_sheet_names = [k for k in wb.sheets if k.startswith("产品出品表_")]
+_production_skus_list: list[str] = []
+for _sname in _out_sheet_names:
+    _df_out = wb.sheets[_sname]
+    _keys = build_product_key(_df_out)
+    for _k in _keys.dropna().unique():
+        _k_str = str(_k).strip()
+        if _k_str and _k_str not in _production_skus_list:
+            _production_skus_list.append(_k_str)
+_production_skus = sorted(_production_skus_list)
 
 
 def _init_session():
@@ -243,6 +398,10 @@ def _init_session():
 
 
 with tab5:
+    st.info("📌 **功能说明**：录入和管理生产/销量计划场景，支持 CSV 批量导入。\n"
+             "**使用方法**：选择计划类型（销量/生产）→ 输入场景名 → 编辑数据 → 保存；可复制历史场景。\n"
+             "**字段含义**：SKU（销量计划=产品毛利表可售成品，生产计划=产品出品表配料）；"
+             "规格=产品尺寸/容量；数量=计划件数；日期=计划执行日期。")
     _init_session()
     plans: dict = st.session_state["production_plans"]
     current = st.session_state.get("current_plan_name")
@@ -364,16 +523,23 @@ with tab5:
     editor_df = pd.DataFrame(default_rows[:num_rows])
     editor_df["计划类型"] = editor_df["计划类型"].fillna(plan_type_filter)
 
+    # ── SKU pool by plan type ────────────────────────────────────────
+    # 销量计划 → 产品毛利表（可售成品）；生产计划 → 产品出品表（生产配料）
+    if plan_type_filter == "production":
+        _editor_sku_options = _production_skus
+    else:
+        _editor_sku_options = _all_skus
+
     # data_editor
-    st.caption("直接编辑下表，或上传 CSV 回填")
+    st.caption("直接编辑下表，或上传 CSV 回填。日期格式：YYYY-MM-DD")
     edited_df = st.data_editor(
         editor_df,
         num_rows="dynamic",
         use_container_width=True,
         height=min(num_rows * 40 + 60, 500),
         column_config={
-            "日期": st.column_config.TextColumn("日期", required=True),
-            "SKU": st.column_config.SelectboxColumn("SKU", options=_all_skus, required=False),
+            "日期": st.column_config.TextColumn("日期（YYYY-MM-DD）", required=True),
+            "SKU": st.column_config.SelectboxColumn("SKU", options=_editor_sku_options, required=False),
             "规格": st.column_config.TextColumn("规格"),
             "数量": st.column_config.NumberColumn("数量", min_value=0, format="%d"),
             "计划类型": st.column_config.SelectboxColumn(
@@ -391,9 +557,11 @@ with tab5:
             save_name = edit_plan if edit_plan != "(新建空计划)" else (new_name or f"未命名计划_{len(plans)}")
             rows = []
             for _, row in edited_df.iterrows():
-                if str(row["日期"]).strip():
+                _d = row["日期"]
+                _d_str = _date_str(_parse_date(_d)) if not isinstance(_d, str) else _d
+                if _d_str:
                     rows.append(ProductionRow(
-                        date=str(row["日期"]),
+                        date=_d_str,
                         sku_key=str(row["SKU"]) if pd.notna(row["SKU"]) else "",
                         spec=str(row["规格"]) if pd.notna(row["规格"]) else "",
                         qty=float(row["数量"]) if pd.notna(row["数量"]) else 0,
@@ -432,10 +600,14 @@ with tab5:
 import datetime as dt
 
 
-def _parse_date(s: str) -> Optional[date]:
+def _parse_date(s) -> Optional[date]:
+    if s is None:
+        return None
+    if isinstance(s, date):
+        return s
+    s = str(s).strip()
     if not s:
         return None
-    s = str(s).strip()
     try:
         return date.fromisoformat(s)
     except Exception:
@@ -445,7 +617,18 @@ def _parse_date(s: str) -> Optional[date]:
             return None
 
 
+def _date_str(d: Optional[date]) -> str:
+    """Convert date to YYYY-MM-DD string for display/storage."""
+    if d is None:
+        return ""
+    return d.strftime("%Y-%m-%d")
+
+
 with tab6:
+    st.info("📌 **功能说明**：基于生产计划场景，展开三级 BOM（SKU→主原料/配料→原料），输出原料需求表和缺口预警。\n"
+             "**使用方法**：选择场景+日期范围+提前期+损耗率，点击「展开 BOM」生成原料需求表。\n"
+             "**字段含义**：total_purchase_qty=含损耗的安全备量；lead_days=提前采购天数；"
+             "is_gap=无有效单价或供应状态异常；latest_order_date=最晚下单日。")
     st.subheader("备料计划 — BOM 展开引擎")
     st.caption("三级展开：SKU → 主原料/配料 → 原料；支持损耗率、安全库存、最小采购单位、批次取整、提前期。")
 
@@ -490,9 +673,9 @@ with tab6:
 
     col_date1, col_date2, col_date3 = st.columns([1, 1, 2])
     with col_date1:
-        start_date_str = st.text_input("开始日期 (YYYY-MM-DD)", value="", key="prep_start")
+        start_date = st.date_input("开始日期", value=None, key="prep_start")
     with col_date2:
-        end_date_str = st.text_input("结束日期 (YYYY-MM-DD)", value="", key="prep_end")
+        end_date = st.date_input("结束日期", value=None, key="prep_end")
     with col_date3:
         st.write("")
         st.write("")
@@ -508,8 +691,8 @@ with tab6:
                 st.info("该场景暂无数据。")
             else:
                 # Filter by date range and plan type
-                start_dt = _parse_date(start_date_str)
-                end_dt   = _parse_date(end_date_str)
+                start_dt = start_date
+                end_dt   = end_date
 
                 filtered = []
                 for r in rows:
@@ -660,6 +843,10 @@ with tab6:
 
 
 with tab7:
+    st.info("📌 **功能说明**：基于备料计划的原料需求，生成采购建议清单（含紧急项标注）。\n"
+             "**使用方法**：选择生产计划场景和日期范围，点击「生成采购建议」。\n"
+             "**字段含义**：下单日期=最晚采购日；到货日期=原料到达日期；"
+             "is_urgent=已过期或今日需下单（红色高亮）；来源SKU=使用该原料的产品。")
     st.subheader("采购建议")
     st.caption("基于备料计划输出采购清单：下单日期、到货日期、原料、数量、单位、来源 SKU；红色标注最晚下单日（已过或今日）。")
 
@@ -700,9 +887,9 @@ with tab7:
 
     col_ps_date1, col_ps_date2, col_ps_date3 = st.columns([1, 1, 2])
     with col_ps_date1:
-        ps_start_str = st.text_input("开始日期 (YYYY-MM-DD)", value="", key="ps_start")
+        ps_start_date = st.date_input("开始日期", value=None, key="ps_start")
     with col_ps_date2:
-        ps_end_str = st.text_input("结束日期 (YYYY-MM-DD)", value="", key="ps_end")
+        ps_end_date = st.date_input("结束日期", value=None, key="ps_end")
     with col_ps_date3:
         st.write("")
         st.write("")
@@ -717,8 +904,8 @@ with tab7:
                 st.info("该场景暂无数据。")
             else:
                 # Filter by date range and plan type
-                ps_start_dt = _parse_date(ps_start_str)
-                ps_end_dt   = _parse_date(ps_end_str)
+                ps_start_dt = ps_start_date
+                ps_end_dt   = ps_end_date
 
                 filtered = []
                 for r in rows:
@@ -861,6 +1048,10 @@ def _init_portfolio_session():
 
 
 with tab8:
+    st.info("📌 **功能说明**：多选产品+填数量，实时计算总销售额/成本/毛利/净利/原料种类/产能压力。\n"
+             "**使用方法**：multiselect 选 SKU → 填数量 → 切换口径 → 实时查看 KPI；保存方案 A/B/C 后可对比。\n"
+             "**字段含义**：Revenue=定价×数量；Gross_profit=毛利额；Capacity_pressure=产能压力评分（0-100）；"
+             "material_variety=SKU 涉及的不同原料种类数。")
     _init_portfolio_session()
 
     st.subheader("产品组合评估（实时联动）")
@@ -1041,6 +1232,10 @@ def _init_multi_scenario_session():
 
 
 with tab9:
+    st.info("📌 **功能说明**：创建多组销量假设（A/B/C），对比各方案下的总利润、原料需求、SKU 变动。\n"
+             "**使用方法**：新建多个场景并填入 SKU 数量 → 点击「对比场景」→ 查看汇总表+差异表。\n"
+             "**字段含义**：total_profit=该方案净利润；material_qty=总原料需求量；"
+             "sku_count=方案包含的 SKU 数；diff 表=相对于基准方案的变化量。")
     _init_multi_scenario_session()
 
     st.subheader("多场景对比（F-010）")
@@ -1228,6 +1423,10 @@ with tab9:
 
 
 with tab10:
+    st.info("📌 **功能说明**：在给定约束（产能/预算/销量下限）下，枚举所有可行 SKU 组合，返回利润 Top-3 并给出推荐理由。\n"
+             "**使用方法**：选择候选 SKU 池 → 设置约束条件 → 点击「运行优化」→ 查看推荐方案。\n"
+             "**字段含义**：max_capacity=单品总件数上限；material_budget=原料采购总预算（元）；"
+             "min_sales_per_sku=每个 SKU 的最低销量门槛。")
     st.subheader("选品优化器（F-012）")
     st.caption(
         "输入产能 / 原料预算 / 销量下限约束，枚举所有可行组合，"
@@ -1482,12 +1681,11 @@ with tab10:
 # ── Tab11: 产能需求估算 ────────────────────────────────────────────────────────────────────
 
 with tab11:
+    st.info("📌 **功能说明**：基于生产计划，估算各 SKU/日期的产能压力评分（0-100），高压力项红色标注。\n"
+             "**使用方法**：选择生产计划场景 → 选择「按 SKU」或「按日期」视图 → 点击分析 → 查看评分和柱状图。\n"
+             "**字段含义**：score=产能压力总分；complexity_score=SKU 种类复杂度得分；"
+             "volume_score=产量体积得分；material_score=原料多样性得分；≥60=高压力（红色）。")
     st.subheader("产能需求估算")
-    st.caption(
-        "基于配方出品表的主原料/配料用量估算产能压力评分（0-100分）。"
-        "评分逻辑：SKU复杂度（最多40分，封顶20SKU）+ 产量体积（最多30分，封顶500件）+ 原料多样性（最多30分，封顶30种）。"
-        "≥60分为高压力（红色标注）。"
-    )
 
     _init_session()
     plans: dict = st.session_state["production_plans"]

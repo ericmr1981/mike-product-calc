@@ -660,3 +660,186 @@ def highlight_negative_margin_rows(df: pd.DataFrame, margin_col: str = "margin_b
     mask = result[margin_col].notna() & (result[margin_col] < 0)
     result.loc[mask, "risk"] = "high"
     return result
+
+
+# =============================================================================
+# Legacy F-004 simulation API (workspace version, appended for tab4 compatibility)
+# These use a simpler Scenario model based on material price adjustments.
+# =============================================================================
+
+from dataclasses import dataclass, field
+from typing import Iterable, List, Dict as DictType, Tuple
+
+
+@dataclass
+class MaterialPriceAdjustment:
+    """A single material price override."""
+    item: str
+    new_unit_price: float
+
+
+@dataclass
+class Scenario:
+    """A named material-price scenario (stores adjustments, not SKU selections)."""
+    name: str
+    adjustments: Tuple[MaterialPriceAdjustment, ...] = field(default_factory=tuple)
+
+    def __repr__(self) -> str:
+        return f"Scenario({self.name}, {len(self.adjustments)} adj)"
+
+
+class ScenarioStore:
+    """In-memory registry for MaterialPriceAdjustment scenarios."""
+    def __init__(self) -> None:
+        self._versions: DictType[str, Scenario] = {}
+
+    def put(self, scenario: Scenario) -> None:
+        self._versions[scenario.name] = scenario
+
+    def get(self, name: str) -> Scenario | None:
+        return self._versions.get(name)
+
+    def list_names(self) -> List[str]:
+        return sorted(self._versions.keys())
+
+    def delete(self, name: str) -> None:
+        self._versions.pop(name, None)
+
+    def clear(self) -> None:
+        self._versions.clear()
+
+
+def _ingredient_price_map(
+    sheets: DictType[str, pd.DataFrame],
+) -> DictType[str, float]:
+    """Extract {item_name: unit_price} from 总原料成本表."""
+    df = sheets.get("总原料成本表")
+    if df is None:
+        return {}
+    price_col = next((c for c in df.columns if "单价" in c), None)
+    name_col = next((c for c in df.columns if "品项名称" in c), None)
+    if not price_col or not name_col:
+        return {}
+    out: DictType[str, float] = {}
+    for _, r in df.iterrows():
+        name = str(r.get(name_col, "")).strip()
+        if not name:
+            continue
+        price = to_float(r.get(price_col))
+        if price is not None and price > 0:
+            out[name] = price
+    return out
+
+
+def _adjust_map(adjustments: Iterable[MaterialPriceAdjustment]) -> DictType[str, float]:
+    return {adj.item: adj.new_unit_price for adj in adjustments}
+
+
+def simulate_scenario(
+    sheets: DictType[str, pd.DataFrame],
+    scenario: Scenario,
+    basis: str = "store",
+) -> pd.DataFrame:
+    """Return sku_profit_table with adjusted costs based on scenario price overrides."""
+    df = sku_profit_table(sheets, basis=basis, only_status=None)
+    base_prices = _ingredient_price_map(sheets)
+    overrides = _adjust_map(scenario.adjustments)
+    effective_prices = {**base_prices, **overrides}
+
+    # Build adjusted cost per SKU
+    sku_adjusted_cost: DictType[str, float] = {}
+    out_sheets = [k for k in sheets if k.startswith("产品出品表_")]
+    cost_col = "门店总成本" if basis == "store" else "总成本"
+
+    for sheet_name in out_sheets:
+        df_out = sheets.get(sheet_name)
+        if df_out is None or cost_col not in df_out.columns:
+            continue
+        keys = build_product_key(df_out)
+        for idx, row in df_out.iterrows():
+            key = str(keys.at[idx]).strip()
+            if not key:
+                continue
+            raw_cost = to_float(row.get(cost_col))
+            if raw_cost is None:
+                continue
+            mm = str(row.get("主原料", "")).strip()
+            ing = str(row.get("配料", "")).strip()
+            item_name = ing or mm
+            if not item_name:
+                continue
+            base = base_prices.get(item_name)
+            adj = overrides.get(item_name)
+            if base is None or base <= 0:
+                continue
+            if adj is not None:
+                scale = adj / base
+                sku_adjusted_cost[key] = sku_adjusted_cost.get(key, 0) + raw_cost * scale
+            else:
+                sku_adjusted_cost[key] = sku_adjusted_cost.get(key, 0) + raw_cost
+
+    df = df.copy()
+    df["adjusted_cost"] = df["product_key"].map(sku_adjusted_cost)
+    df["has_adjusted"] = df["product_key"].isin(sku_adjusted_cost)
+    df["adjusted_gross_profit"] = df.apply(
+        lambda r: (r["price"] - r["adjusted_cost"])
+        if (pd.notna(r["price"]) and pd.notna(r["adjusted_cost"]) and r["price"] > 0)
+        else None,
+        axis=1,
+    )
+    df["adjusted_gross_margin"] = df.apply(
+        lambda r: (r["price"] - r["adjusted_cost"]) / r["price"]
+        if (pd.notna(r["price"]) and pd.notna(r["adjusted_cost"]) and r["price"] > 0)
+        else None,
+        axis=1,
+    )
+    df["gp_delta"] = df.apply(
+        lambda r: (r["adjusted_gross_profit"] - r["gross_profit"])
+        if (pd.notna(r["adjusted_gross_profit"]) and pd.notna(r["gross_profit"]))
+        else None,
+        axis=1,
+    )
+    df["margin_delta_pp"] = df.apply(
+        lambda r: (r["adjusted_gross_margin"] - r["gross_margin"]) * 100
+        if (pd.notna(r["adjusted_gross_margin"]) and pd.notna(r["gross_margin"]))
+        else None,
+        axis=1,
+    )
+    return df
+
+
+def compare_scenarios(
+    scenario_a: Scenario,
+    scenario_b: Scenario,
+    sheets: DictType[str, pd.DataFrame],
+    basis: str = "store",
+) -> pd.DataFrame:
+    """Return SKU-level diff between two material-price scenarios."""
+    df_a = simulate_scenario(sheets, scenario_a, basis=basis)
+    df_b = simulate_scenario(sheets, scenario_b, basis=basis)
+    base = sku_profit_table(sheets, basis=basis, only_status=None).copy()
+
+    merged = base.merge(
+        df_a[["product_key", "adjusted_gross_profit", "adjusted_gross_margin"]].rename(
+            columns={"adjusted_gross_profit": "gp_a", "adjusted_gross_margin": "gm_a"}
+        ),
+        on="product_key",
+        how="left",
+    ).merge(
+        df_b[["product_key", "adjusted_gross_profit", "adjusted_gross_margin"]].rename(
+            columns={"adjusted_gross_profit": "gp_b", "adjusted_gross_margin": "gm_b"}
+        ),
+        on="product_key",
+        how="left",
+    )
+
+    merged["gp_delta_ab"] = (merged["gp_b"] - merged["gp_a"]).round(4)
+    merged["gm_delta_pp_ab"] = ((merged["gm_b"] - merged["gm_a"]) * 100).round(4)
+    merged["high_risk"] = (
+        (merged["gm_a"].fillna(0) < 0) | (merged["gm_b"].fillna(0) < 0)
+    )
+    for col in ["gross_profit", "gp_a", "gp_b"]:
+        merged[col] = merged[col].round(4)
+    for col in ["gross_margin", "gm_a", "gm_b"]:
+        merged[col] = (merged[col] * 100).round(2)
+    return merged
