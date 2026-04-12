@@ -9,6 +9,7 @@ Feature F-004 — 原料价格模拟器
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
@@ -20,6 +21,110 @@ from mike_product_calc.data.shared import to_float
 # ── Version ──────────────────────────────────────────────────────────────────
 
 VERSION_NAMES = ["当前", "保守", "理想", "旺季"]
+
+_SUFFIX_RE = re.compile(r"\s+\d+\.\d+$")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _clean_name(name: str) -> str:
+    """Compatibility helper used by legacy MaterialCatalog API."""
+    n = _SUFFIX_RE.sub("", str(name).strip())
+    return _WHITESPACE_RE.sub(" ", n).strip()
+
+
+@dataclass
+class MaterialCatalog:
+    """Legacy API shim for app imports.
+
+    New simulator logic no longer requires this class directly, but app.py and
+    some external callers still import it.
+    """
+
+    base_unit_price: Dict[str, float]
+    unit_label: Dict[str, str]
+    qty_per_unit: Dict[str, float]
+    usage_rows: Dict[str, List[Tuple[str, float, float, float]]] = field(default_factory=dict)
+    inferred_base_price: Dict[str, float] = field(default_factory=dict)
+    unmatched_materials: List[str] = field(default_factory=list)
+
+    def base_price(self, material: str) -> float:
+        key = _clean_name(material)
+        if key in self.inferred_base_price:
+            return float(self.inferred_base_price[key])
+        p = self.base_unit_price.get(key)
+        q = self.qty_per_unit.get(key)
+        if p is not None and q is not None and q > 0:
+            return float(p) / float(q)
+        return 0.0
+
+    @staticmethod
+    def from_sheets(sheets: Dict[str, pd.DataFrame]) -> "MaterialCatalog":
+        df_mat = sheets.get("总原料成本表")
+        if df_mat is None:
+            return MaterialCatalog(base_unit_price={}, unit_label={}, qty_per_unit={})
+
+        name_col = next((c for c in df_mat.columns if "品项名称" in c), None)
+        price_col = next((c for c in df_mat.columns if "原料价格" in c), None) or next((c for c in df_mat.columns if "单价" in c), None)
+        unit_col = next((c for c in df_mat.columns if "订货单位" in c or "单位" in c), None)
+        qty_col = next((c for c in df_mat.columns if "单位量" in c or "单位数量" in c), None)
+
+        base_unit_price: Dict[str, float] = {}
+        unit_label: Dict[str, str] = {}
+        qty_per_unit: Dict[str, float] = {}
+        inferred_base_price: Dict[str, float] = {}
+
+        if name_col and price_col:
+            for _, row in df_mat.iterrows():
+                name = _clean_name(str(row.get(name_col, "")).strip())
+                if not name:
+                    continue
+                price = to_float(row.get(price_col))
+                qty = to_float(row.get(qty_col)) if qty_col else None
+                if price is None or price <= 0:
+                    continue
+                base_unit_price[name] = float(price)
+                if unit_col:
+                    unit_label[name] = str(row.get(unit_col, "")).strip()
+                if qty is not None and qty > 0:
+                    qty_per_unit[name] = float(qty)
+                    inferred_base_price[name] = float(price) / float(qty)
+                else:
+                    qty_per_unit[name] = 1.0
+                    inferred_base_price[name] = float(price)
+
+        return MaterialCatalog(
+            base_unit_price=base_unit_price,
+            unit_label=unit_label,
+            qty_per_unit=qty_per_unit,
+            usage_rows={},
+            inferred_base_price=inferred_base_price,
+            unmatched_materials=[],
+        )
+
+    def material_list_dataframe(self) -> pd.DataFrame:
+        rows = []
+        all_names = set(self.base_unit_price.keys()) | set(self.inferred_base_price.keys())
+        for name in sorted(all_names):
+            rows.append(
+                {
+                    "material": name,
+                    "material_clean": name,
+                    "base_unit_price_per_g": float(self.base_price(name)),
+                    "matched_cost_table": name in self.base_unit_price,
+                    "unit_label": self.unit_label.get(name, ""),
+                    "qty_per_unit": float(self.qty_per_unit.get(name, 1.0)),
+                }
+            )
+        return pd.DataFrame(rows)
+
+
+@dataclass(frozen=True)
+class SkuCostInfo:
+    product_key: str
+    name: str
+    category: str
+    price: Optional[float]
+    cost: Optional[float]
 
 
 @dataclass(frozen=True)
@@ -244,6 +349,53 @@ def simulate_scenario(
 
     return df
 
+
+
+def build_sku_cost_table(
+    sheets: Dict[str, pd.DataFrame],
+    basis: ProfitBasis = "store",
+) -> pd.DataFrame:
+    """Legacy compatibility API: return SKU-level base cost table."""
+    df = sku_profit_table(sheets, basis=basis, only_status=None).copy()
+    if df.empty:
+        return pd.DataFrame(columns=["product_key", "name", "category", "price", "cost"])
+    return df[["product_key", "name", "category", "price", "cost"]]
+
+
+def apply_scenario_to_sku_costs(
+    sheets: Dict[str, pd.DataFrame],
+    scenario: Scenario,
+    basis: ProfitBasis = "store",
+) -> pd.DataFrame:
+    """Legacy compatibility API: return SKU table with adjusted_cost column."""
+    out = simulate_scenario(sheets, scenario, basis=basis)
+    keep = [c for c in ["product_key", "name", "category", "price", "cost", "adjusted_cost"] if c in out.columns]
+    return out[keep].copy() if keep else out
+
+
+def recalc_profit_with_adjusted_costs(
+    sheets: Dict[str, pd.DataFrame],
+    scenario: Scenario,
+    basis: ProfitBasis = "store",
+) -> pd.DataFrame:
+    """Legacy compatibility API: recompute profit fields under scenario."""
+    return simulate_scenario(sheets, scenario, basis=basis)
+
+
+def get_builtin_scenarios() -> Dict[str, Scenario]:
+    """Legacy compatibility API: predefined scenario names."""
+    return {name: Scenario(name=name, adjustments=()) for name in VERSION_NAMES}
+
+
+def highlight_negative_margin_rows(df: pd.DataFrame, margin_col: str = "adjusted_gross_margin") -> pd.DataFrame:
+    """Legacy compatibility API: add a negative-margin flag for UI highlighting."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    if margin_col not in out.columns:
+        return out
+    out["is_negative_margin"] = out[margin_col].fillna(0) < 0
+    return out
 
 def compare_scenarios(
     a: Scenario,
