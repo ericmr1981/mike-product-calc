@@ -83,17 +83,31 @@ class MaterialDemandRow:
         plan_qty: float,
         order_date: Optional[date] = None,
         unit_price: Optional[float] = None,
+        unit_qty: Optional[float] = None,
         is_gap: bool = False,
         gap_reason: str = "",
     ) -> "MaterialDemandRow":
-        gross = plan_qty * entry.effective_qty_per_unit
-        total_ss = entry.safety_stock * plan_qty
+        """Build one demand row.
 
-        # Batch rounding: ceil((gross + total_ss) / min_purchase) × min_purchase
+        - entry.qty_per_unit is interpreted in *base units* (the unit of recipe/出品表 用量).
+        - unit_qty is "单位量": how many base units in one 订货单位.
+
+        Output qty fields (gross_qty / purchase_qty / safety_stock, etc.) are expressed
+        in 订货单位 when unit_qty is valid; otherwise we fall back to base units.
+        """
+
+        q_unit = float(unit_qty) if (unit_qty is not None and unit_qty > 0) else 1.0
+
+        # Convert base-unit recipe usage → purchase units
+        qty_per_unit_pu = entry.qty_per_unit / q_unit
+        gross_pu = plan_qty * entry.effective_qty_per_unit / q_unit
+        total_ss_pu = (entry.safety_stock * plan_qty) / q_unit
+
+        # Batch rounding in purchase units
         if entry.min_purchase > 0 and entry.min_purchase > 0.0:
-            purchase_qty = math.ceil((gross + total_ss) / entry.min_purchase) * entry.min_purchase
+            purchase_qty = math.ceil((gross_pu + total_ss_pu) / entry.min_purchase) * entry.min_purchase
         else:
-            purchase_qty = gross + total_ss
+            purchase_qty = gross_pu + total_ss_pu
 
         if order_date is not None:
             latest_order = order_date - timedelta(days=entry.lead_days)
@@ -109,10 +123,10 @@ class MaterialDemandRow:
             level=entry.level,
             unit=entry.unit,
             plan_qty=plan_qty,
-            qty_per_unit=entry.qty_per_unit,
-            gross_qty=round(gross, 4),
-            safety_stock=entry.safety_stock,
-            total_safety_stock=round(total_ss, 4),
+            qty_per_unit=round(qty_per_unit_pu, 6),
+            gross_qty=round(gross_pu, 4),
+            safety_stock=round(entry.safety_stock / q_unit, 6),
+            total_safety_stock=round(total_ss_pu, 4),
             min_purchase=entry.min_purchase,
             purchase_qty=round(purchase_qty, 4),
             purchase_unit=entry.unit,
@@ -155,6 +169,61 @@ def _price_col_for_basis(df: pd.DataFrame, basis: ProfitBasis) -> Optional[str]:
 
 
 
+
+
+# Recipe sheets (2nd-level) — used to expand semi-finished/product items into raw ingredients.
+# Workbook convention:
+# - 产品配方表_*: per-product recipes (e.g. 产品配方表_Gelato)
+# - 半成品配方表_*: semi-finished recipes (e.g. 半成品配方表_雪花冰)
+# Columns: 品类, 品名, 配料, 用量
+_RECIPE_SHEET_HINTS = ("配方表",)
+
+
+def _build_recipe_index(sheets: Dict[str, pd.DataFrame]) -> Dict[Tuple[str, str], dict]:
+    """Build (category, item_name) -> recipe lines.
+
+    Returns mapping:
+      (cat, name) -> {"rows": [(ingredient, qty), ...], "denom": sum(qty), "sheet": sheet_name}
+
+    Scaling rule used in BOM expansion:
+      If SKU consumes X (in the same base unit as recipe's 用量) of item,
+      and recipe totals denom, then ingredient demand = X * (qty/denom).
+
+    Note: This engine is intentionally *2-level* per Ud Lee requirements.
+    """
+
+    idx: Dict[Tuple[str, str], dict] = {}
+    if not sheets:
+        return idx
+
+    for sheet_name, df in sheets.items():
+        if df is None:
+            continue
+        if not any(h in str(sheet_name) for h in _RECIPE_SHEET_HINTS):
+            continue
+        required = {"品类", "品名", "配料", "用量"}
+        if not required.issubset(set(df.columns)):
+            continue
+
+        for _, r in df.iterrows():
+            cat = str(r.get("品类", "")).strip()
+            name = str(r.get("品名", "")).strip()
+            ing = str(r.get("配料", "")).strip()
+            qty = to_float(r.get("用量"))
+            if not cat or not name or not ing or qty is None or qty <= 0:
+                continue
+
+            key = (cat, name)
+            if key not in idx:
+                idx[key] = {"rows": [], "denom": 0.0, "sheet": str(sheet_name)}
+            idx[key]["rows"].append((ing, float(qty)))
+            idx[key]["denom"] += float(qty)
+
+    # Keep only valid recipes
+    idx = {k: v for k, v in idx.items() if v.get("denom", 0) > 0 and v.get("rows")}
+    return idx
+
+
 def _build_sku_key_to_sheet(
     sheets: Dict[str, pd.DataFrame]
 ) -> Dict[str, Tuple[pd.DataFrame, pd.Series, str]]:
@@ -179,34 +248,42 @@ def _build_material_catalog(
 ) -> pd.DataFrame:
     """Build a lookup table from 总原料成本表.
 
-    Returns DataFrame with columns: name, category, order_unit, unit_price, unit_qty, status.
+    Returns DataFrame with columns:
+      name, category, order_unit, unit_price, unit_qty, min_unit_cost, status
+
+    Where:
+      unit_price    = price per 订货单位 (加价前单价/加价后单价)
+      unit_qty      = how many "base units" in one 订货单位 (单位量)
+      min_unit_cost = unit_price / unit_qty (fallback = unit_price)
+
+    Downstream rules:
+      - Purchase qty is expressed in 订货单位
+      - total_cost = purchase_qty * unit_price
     """
     df = sheets.get("总原料成本表")
     if df is None:
-        return pd.DataFrame(columns=["name", "category", "order_unit", "unit_price", "unit_qty", "status"])
+        return pd.DataFrame(columns=[
+            "name", "category", "order_unit", "unit_price", "unit_qty", "min_unit_cost", "status"
+        ])
 
-    # NOTE: “备料计划/采购建议”中的成本口径必须与「SKU 毛利分析（双口径）」一致。
-    # Unified rule (store-basis by default in this module):
-    #   最小单位成本 = 加价后单价 / 单位量
-    #   单位量缺失/<=0 → 回退为旧逻辑（直接用单价）
     price_col = _price_col_for_basis(df, basis)
-    raw_price = df[price_col].map(to_float) if (price_col and price_col in df.columns) else pd.Series(dtype=float)
+    unit_price = df[price_col].map(to_float) if (price_col and price_col in df.columns) else pd.Series(dtype=float)
     unit_qty = df["单位量"].map(to_float) if "单位量" in df.columns else pd.Series(dtype=float)
 
-    min_unit_price = raw_price
+    # min-unit cost = unit_price / unit_qty
+    min_unit_cost = unit_price
     if not unit_qty.empty:
-        # Vectorized safe divide: if qty invalid → keep raw_price
         q = unit_qty.where(unit_qty > 0)
-        min_unit_price = raw_price.where(q.isna(), raw_price / q)
+        min_unit_cost = unit_price.where(q.isna(), unit_price / q)
 
     out = pd.DataFrame({
-        "name":     df["品项名称"].fillna("").astype(str).map(str.strip),
-        "category": df["品项类别"].fillna("").astype(str).map(str.strip) if "品项类别" in df.columns else "",
+        "name":       df["品项名称"].fillna("").astype(str).map(str.strip),
+        "category":   df["品项类别"].fillna("").astype(str).map(str.strip) if "品项类别" in df.columns else "",
         "order_unit": df["订货单位"].fillna("").astype(str).map(str.strip) if "订货单位" in df.columns else "",
-        # unit_price here means “min-unit cost” (already divided by unit_qty when available)
-        "unit_price": min_unit_price,
-        "unit_qty":  unit_qty,
-        "status":    df["生效状态"].fillna("").astype(str).map(str.strip) if "生效状态" in df.columns else "",
+        "unit_price": unit_price,
+        "unit_qty":   unit_qty,
+        "min_unit_cost": min_unit_cost,
+        "status":     df["生效状态"].fillna("").astype(str).map(str.strip) if "生效状态" in df.columns else "",
     })
     out = out[out["name"] != ""].drop_duplicates(subset=["name"]).reset_index(drop=True)
     return out
@@ -215,28 +292,32 @@ def _build_material_catalog(
 def _get_material_info(
     catalog: pd.DataFrame,
     material_name: str,
-) -> Tuple[Optional[float], Optional[str], Optional[float], bool, str]:
+) -> Tuple[Optional[float], Optional[str], Optional[float], Optional[float], bool, str]:
     """Look up a material in the catalog.
 
-    Returns (unit_price, order_unit, min_purchase, is_stable, gap_reason).
+    Returns:
+      (unit_price, order_unit, unit_qty, min_unit_cost, is_stable, gap_reason)
     """
     row = catalog[catalog["name"] == material_name]
     if row.empty:
-        return None, None, None, False, "原料未在总原料成本表中登记"
+        return None, None, None, None, False, "原料未在总原料成本表中登记"
 
     r = row.iloc[0]
-    price = r["unit_price"] if pd.notna(r["unit_price"]) else None
-    unit   = str(r["order_unit"]) if pd.notna(r["order_unit"]) else ""
-    status = str(r["status"]) if pd.notna(r["status"]) else ""
+    unit_price = r["unit_price"] if pd.notna(r.get("unit_price")) else None
+    order_unit = str(r.get("order_unit") or "").strip()
+    unit_qty = r["unit_qty"] if pd.notna(r.get("unit_qty")) else None
+    min_unit_cost = r["min_unit_cost"] if pd.notna(r.get("min_unit_cost")) else None
+
+    status = str(r.get("status") or "").strip()
 
     is_stable = status == "已生效"
     gap_reason = ""
-    if price is None:
+    if unit_price is None:
         gap_reason = "无有效单价"
     elif not is_stable:
         gap_reason = f"供应状态：{status}"
 
-    return price, unit, None, is_stable, gap_reason
+    return unit_price, order_unit, unit_qty, min_unit_cost, is_stable, gap_reason
 
 
 # -------------------------------------------------------------------------------------------------
@@ -247,96 +328,101 @@ def _collect_bom_entries(
     sheets: Dict[str, pd.DataFrame],
     sku_key: str,
     sku_key_to_sheet: Dict[str, Tuple[pd.DataFrame, pd.Series, str]],
-    visited: List[str],
-    depth: int,
+    recipe_index: Dict[Tuple[str, str], dict],
 ) -> List[BomEntry]:
-    """Recursively collect BOM entries for a SKU.
+    """Collect BOM entries for a SKU (2-level recipe model).
 
-    depth=1: direct ingredients from 出品表
-    depth=2: semi-finished (ingredients that have their own recipe)
-    depth=3: raw materials (from 总原料成本表, not found in 出品表)
+    Level 1: 产品出品表_* (主原料/配料 + 用量)
+    Level 2: 配方表_* / 半成品配方表_* (品类, 品名) → 配料
+
+    For raw-material statistics, we keep only leaf ingredients:
+    if an item is expandable (has a recipe), the intermediate item itself
+    is NOT included in output; only its expanded ingredients are returned.
+
+    Scaling rule:
+      SKU consumes X of item (same unit as recipe 用量)
+      recipe total denom = sum(用量)
+      ingredient demand = X * (ingredient_qty / denom)
+
+    This intentionally supports *two levels* (per requirement).
     """
-    if depth > _MAX_BOM_DEPTH:
-        return []
 
     entries: List[BomEntry] = []
-    key_info = sku_key_to_sheet.get(sku_key)
 
+    key_info = sku_key_to_sheet.get(sku_key)
     if key_info is None:
-        # Not a known SKU — treat as a raw material.
-        return []
+        return entries
 
     df, keys, sheet_name = key_info
     part = df.loc[keys == sku_key].copy()
     if part.empty:
-        return []
+        return entries
 
-    # Collect 主原料 and 配料
-    for col in ("主原料", "配料"):
-        if col not in part.columns:
-            continue
-        items = part[col].fillna("").astype(str).map(str.strip)
-        qty_col = "用量"
-        if qty_col not in part.columns:
+    sku_category = str(sku_key).split("|")[0].strip() if "|" in str(sku_key) else ""
+
+    qty_col = "用量"
+    if qty_col not in part.columns:
+        return entries
+
+    # Each row has either 主原料 or 配料
+    for _, row in part.iterrows():
+        mm = str(row.get("主原料", "") or "").strip()
+        ing = str(row.get("配料", "") or "").strip()
+        item = ing or mm
+        if not item:
             continue
 
-        for idx, item in items.items():
-            if not item:
+        raw_qty = to_float(row.get(qty_col))
+        qty = float(raw_qty) if raw_qty is not None and raw_qty > 0 else 0.0
+        if qty <= 0:
+            continue
+
+        rkey = (sku_category, item)
+        recipe = recipe_index.get(rkey)
+        if recipe is not None:
+            denom = float(recipe.get("denom") or 0.0)
+            if denom > 0:
+                scale = qty / denom
+                for ing_name, ing_qty in recipe.get("rows", []):
+                    iname = str(ing_name).strip()
+                    if not iname:
+                        continue
+                    q = float(ing_qty) * scale
+                    if q <= 0:
+                        continue
+                    entries.append(
+                        BomEntry(
+                            sku_key=sku_key,
+                            material=iname,
+                            level=2,
+                            qty_per_unit=q,
+                            unit="",
+                            loss_rate=0.0,
+                            safety_stock=0.0,
+                            min_purchase=0.0,
+                            lead_days=0,
+                            is_semi_finished=False,
+                            source_sheet=f"{sheet_name}→{recipe.get('sheet','')}",
+                        )
+                    )
                 continue
 
-            raw_qty = to_float(part.at[idx, qty_col]) if qty_col in part.columns else None
-            qty = raw_qty if raw_qty is not None and raw_qty > 0 else 0.0
-
-            # Determine level and whether it's semi-finished.
-            if item in visited:
-                # Already seen in this chain — treat as raw to avoid infinite loop.
-                entries.append(BomEntry(
-                    sku_key=sku_key,
-                    material=item,
-                    level=depth,
-                    qty_per_unit=qty,
-                    unit="",
-                    loss_rate=0.0,
-                    safety_stock=0.0,
-                    min_purchase=0.0,
-                    lead_days=0,
-                    is_semi_finished=False,
-                    source_sheet=sheet_name,
-                ))
-            elif item in sku_key_to_sheet:
-                # Has its own recipe — semi-finished, recurse deeper.
-                entries.append(BomEntry(
-                    sku_key=sku_key,
-                    material=item,
-                    level=depth,
-                    qty_per_unit=qty,
-                    unit="",
-                    loss_rate=0.0,
-                    safety_stock=0.0,
-                    min_purchase=0.0,
-                    lead_days=0,
-                    is_semi_finished=True,
-                    source_sheet=sheet_name,
-                ))
-                deeper = _collect_bom_entries(
-                    sheets, item, sku_key_to_sheet, visited + [item], depth + 1
-                )
-                entries.extend(deeper)
-            else:
-                # Raw material — not in 出品表.
-                entries.append(BomEntry(
-                    sku_key=sku_key,
-                    material=item,
-                    level=depth,
-                    qty_per_unit=qty,
-                    unit="",
-                    loss_rate=0.0,
-                    safety_stock=0.0,
-                    min_purchase=0.0,
-                    lead_days=0,
-                    is_semi_finished=False,
-                    source_sheet=sheet_name,
-                ))
+        # Leaf item
+        entries.append(
+            BomEntry(
+                sku_key=sku_key,
+                material=item,
+                level=1,
+                qty_per_unit=qty,
+                unit="",
+                loss_rate=0.0,
+                safety_stock=0.0,
+                min_purchase=0.0,
+                lead_days=0,
+                is_semi_finished=False,
+                source_sheet=sheet_name,
+            )
+        )
 
     return entries
 
@@ -395,10 +481,11 @@ def bom_expand(
         ])
 
     sku_key_to_sheet = _build_sku_key_to_sheet(sheets)
+    recipe_index = _build_recipe_index(sheets)
     catalog = _build_material_catalog(sheets, basis=basis)
 
     raw_entries = _collect_bom_entries(
-        sheets, sku_key, sku_key_to_sheet, visited=[sku_key], depth=1
+        sheets, sku_key, sku_key_to_sheet, recipe_index
     )
 
     # Deduplicate: keep unique (material, level) pairs, sum qty_per_unit
@@ -447,7 +534,7 @@ def bom_expand(
             source_sheet=v["source_sheet"],
         )
 
-        price, order_unit, min_pur, is_stable, gap_reason = _get_material_info(catalog, v["material"])
+        unit_price, order_unit, unit_qty, min_unit_cost, is_stable, gap_reason = _get_material_info(catalog, v["material"])
 
         if not order_unit and v["unit"]:
             order_unit = v["unit"]
@@ -461,13 +548,13 @@ def bom_expand(
                 unit=order_unit or entry.unit,
                 loss_rate=entry.loss_rate,
                 safety_stock=entry.safety_stock,
-                min_purchase=min_pur if min_pur and min_pur > 0 else 1.0,
+                min_purchase=1.0,
                 lead_days=entry.lead_days,
                 is_semi_finished=entry.is_semi_finished,
                 source_sheet=entry.source_sheet,
             )
 
-        is_gap = (price is None) or (not is_stable and price is not None)
+        is_gap = (unit_price is None) or (not is_stable and unit_price is not None)
         if is_gap and not gap_reason:
             gap_reason = "供应不稳定或无有效单价"
 
@@ -475,13 +562,15 @@ def bom_expand(
             entry=entry,
             plan_qty=plan_qty,
             order_date=order_date,
-            unit_price=price,
+            unit_price=unit_price,
+            unit_qty=unit_qty,
             is_gap=is_gap,
             gap_reason=gap_reason,
         )
-        # Override unit with catalog order_unit if available
+        # Ensure purchase/display unit is 订货单位
         if order_unit:
             mdr.purchase_unit = order_unit
+            mdr.unit = order_unit
         rows.append(mdr)
 
     out = pd.DataFrame([r.__dict__ for r in rows])

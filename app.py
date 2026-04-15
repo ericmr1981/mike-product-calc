@@ -3,7 +3,9 @@ from __future__ import annotations
 import sys
 import tempfile
 import io
-from datetime import date, timedelta
+import json
+import hashlib
+from datetime import date, timedelta, datetime
 import os
 from pathlib import Path
 
@@ -68,44 +70,134 @@ st.set_page_config(page_title="mike-product-calc", layout="wide")
 st.title("蜜可诗产品经营决策台 (mike-product-calc)")
 st.caption("当前版本：Excel 解析 / 校验、SKU 毛利分析（双口径）、F-002 oracle、F-003 第一版反推定价。")
 
-# ── 上传文件持久化（session 级）──────────────────────────────────────
-_default_file_persistent = st.session_state.get("_uploaded_bytes")
-_default_file_name = st.session_state.get("_uploaded_name", "")
+# ── 上传文件持久化（磁盘级，可删除/替换）────────────────────────────────────
+UPLOAD_DIR = ROOT / "data" / "uploads"
+REGISTRY_PATH = UPLOAD_DIR / "registry.json"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-if _default_file_persistent:
-    _default_bytes = io.BytesIO(_default_file_persistent)
-    _default_bytes.name = _default_file_name
-    _default_file_widget = st.file_uploader(
-        "📂 上传/更新 蜜可诗产品库.xlsx",
-        type=["xlsx"],
-        key="xlsx_upload",
-    )
-else:
-    _default_file_widget = None
-    _default_file_widget = st.file_uploader("📂 上传 蜜可诗产品库.xlsx", type=["xlsx"], key="xlsx_upload")
 
-uploaded = _default_file_widget
+def _sha256_bytes(b: bytes) -> str:
+    return hashlib.sha256(b).hexdigest()
 
-if uploaded:
-    st.session_state["_uploaded_bytes"] = uploaded.getvalue()
-    st.session_state["_uploaded_name"] = getattr(uploaded, "name", "workbook.xlsx")
 
-if not uploaded:
-    if _default_file_persistent:
-        st.info("已加载上次会话的文件。如需更换，请重新上传。")
-        uploaded = io.BytesIO(_default_file_persistent)
-        uploaded.name = _default_file_name
-    else:
-        # Fallback: auto-load from MIKE_DEFAULT_XLSX env var
-        _default_xlsx = os.environ.get("MIKE_DEFAULT_XLSX", "")
-        if _default_xlsx and Path(_default_xlsx).exists():
-            uploaded = io.BytesIO(Path(_default_xlsx).read_bytes())
-            uploaded.name = Path(_default_xlsx).name
+def _load_registry() -> list[dict]:
+    if not REGISTRY_PATH.exists():
+        return []
+    try:
+        data = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_registry(items: list[dict]) -> None:
+    REGISTRY_PATH.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _delete_file(file_id: str) -> None:
+    items = _load_registry()
+    keep: list[dict] = []
+    for it in items:
+        if it.get("id") == file_id:
+            saved = it.get("saved_name")
+            if saved:
+                fp = UPLOAD_DIR / saved
+                if fp.exists():
+                    fp.unlink()
         else:
-            st.info("请上传 xlsx 文件开始（文件会在当前会话中保留，无需重复上传）。")
-            st.stop()
+            keep.append(it)
+    _save_registry(keep)
 
 
+def _save_upload(bytes_data: bytes, orig_name: str) -> dict:
+    fid = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{_sha256_bytes(bytes_data)[:10]}"
+    safe_name = orig_name.replace('/', '_').replace('\\', '_')
+    saved_name = f"{fid}__{safe_name}"
+    (UPLOAD_DIR / saved_name).write_bytes(bytes_data)
+    return {
+        "id": fid,
+        "orig_name": orig_name,
+        "saved_name": saved_name,
+        "uploaded_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        "size": len(bytes_data),
+        "sha256": _sha256_bytes(bytes_data),
+    }
+
+
+# UI: file manager
+with st.expander("📁 数据文件管理（永久保存，可删除/替换）", expanded=True):
+    registry = _load_registry()
+
+    # Choose current file
+    labels = ["(请选择)"]
+    id_by_label: dict[str, str] = {"(请选择)": ""}
+    for it in sorted(registry, key=lambda x: x.get('uploaded_at', ''), reverse=True):
+        label = f"{it.get('orig_name','')} | {str(it.get('id',''))[:8]} | {it.get('uploaded_at','')}"
+        labels.append(label)
+        id_by_label[label] = str(it.get('id',''))
+
+    active_id = st.session_state.get('active_file_id', '')
+    # default selection
+    default_label = next((lb for lb, fid in id_by_label.items() if fid == active_id), "(请选择)")
+    selected_label = st.selectbox("当前工作簿", options=labels, index=labels.index(default_label) if default_label in labels else 0)
+    selected_id = id_by_label.get(selected_label, "")
+    if selected_id:
+        st.session_state['active_file_id'] = selected_id
+
+    col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
+    with col_f1:
+        replace_current = st.checkbox('上传后替换当前（自动删除当前文件）', value=False)
+    with col_f2:
+        if st.button('🗑️ 删除当前文件'):
+            if selected_id:
+                _delete_file(selected_id)
+                st.session_state['active_file_id'] = ''
+                st.rerun()
+            else:
+                st.warning('请先选择一个文件再删除')
+    with col_f3:
+        st.write('')
+
+    up = st.file_uploader('📂 上传/新增 蜜可诗产品库.xlsx', type=['xlsx'], key='xlsx_upload')
+    if up is not None:
+        b = up.getvalue()
+        entry = _save_upload(b, getattr(up, 'name', 'workbook.xlsx'))
+        items = _load_registry()
+        items.insert(0, entry)
+        _save_registry(items)
+
+        if replace_current and selected_id:
+            _delete_file(selected_id)
+
+        st.session_state['active_file_id'] = entry['id']
+        st.success(f"已保存：{entry['orig_name']}（{entry['id'][:8]}）")
+        st.rerun()
+
+
+def _resolve_active_workbook_bytes() -> tuple[bytes, str]:
+    # 1) active from registry
+    fid = st.session_state.get('active_file_id', '')
+    if fid:
+        for it in _load_registry():
+            if str(it.get('id')) == str(fid):
+                fp = UPLOAD_DIR / str(it.get('saved_name'))
+                if fp.exists():
+                    return fp.read_bytes(), str(it.get('orig_name') or fp.name)
+
+    # 2) fallback: env var
+    _default_xlsx = os.environ.get('MIKE_DEFAULT_XLSX', '')
+    if _default_xlsx and Path(_default_xlsx).exists():
+        p = Path(_default_xlsx)
+        return p.read_bytes(), p.name
+
+    raise FileNotFoundError('No workbook selected/uploaded')
+
+
+try:
+    workbook_bytes, workbook_name = _resolve_active_workbook_bytes()
+except FileNotFoundError:
+    st.info('请先在上方上传/选择 xlsx 文件开始。')
+    st.stop()
 @st.cache_data(show_spinner=False)
 def _load_and_validate(bytes_data: bytes):
     with tempfile.TemporaryDirectory() as td:
@@ -117,7 +209,7 @@ def _load_and_validate(bytes_data: bytes):
 
 
 with st.spinner("解析中..."):
-    wb, issues = _load_and_validate(uploaded.getvalue())
+    wb, issues = _load_and_validate(workbook_bytes)
 
 sheet_names = list(wb.sheets.keys())
 
@@ -1590,7 +1682,7 @@ with tab10:
     # Summary metric row
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     col_m1.metric("方案", best_scenario.name)
-    col_m2.metric("选中 SKU 数", best_scenario.sku_count)
+    col_m2.metric("选中 SKU 数", best_result.sku_count)
     total_units_best = sum(int(q) for _, q in best_scenario.selections)
     col_m3.metric("总件数", total_units_best)
     col_m4.metric(
