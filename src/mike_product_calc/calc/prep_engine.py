@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from mike_product_calc.calc.profit import ProfitBasis
 from mike_product_calc.data.shared import build_product_key, to_float
 
 # -------------------------------------------------------------------------------------------------
@@ -133,6 +134,27 @@ class MaterialDemandRow:
 _OUT_SHEETS = ["产品出品表_Gelato", "产品出品表_雪花冰", "产品出品表_饮品"]
 
 
+def _price_col_for_basis(df: pd.DataFrame, basis: ProfitBasis) -> Optional[str]:
+    """Select correct price column from 总原料成本表 for the chosen basis.
+
+    Convention:
+    - 加价前单价 = 出厂单价 (factory)
+    - 加价后单价 = 门店单价 (store)
+    """
+
+    if basis == "factory" and "加价前单价" in df.columns:
+        return "加价前单价"
+    if basis == "store" and "加价后单价" in df.columns:
+        return "加价后单价"
+
+    # Fallbacks for older/variant headers.
+    return next((c for c in df.columns if "原料价格" in c), None) or next(
+        (c for c in df.columns if "单价" in c),
+        None,
+    )
+
+
+
 def _build_sku_key_to_sheet(
     sheets: Dict[str, pd.DataFrame]
 ) -> Dict[str, Tuple[pd.DataFrame, pd.Series, str]]:
@@ -150,7 +172,11 @@ def _build_sku_key_to_sheet(
     return result
 
 
-def _build_material_catalog(sheets: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+def _build_material_catalog(
+    sheets: Dict[str, pd.DataFrame],
+    *,
+    basis: ProfitBasis = "store",
+) -> pd.DataFrame:
     """Build a lookup table from 总原料成本表.
 
     Returns DataFrame with columns: name, category, order_unit, unit_price, unit_qty, status.
@@ -163,7 +189,8 @@ def _build_material_catalog(sheets: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     # Unified rule (store-basis by default in this module):
     #   最小单位成本 = 加价后单价 / 单位量
     #   单位量缺失/<=0 → 回退为旧逻辑（直接用单价）
-    raw_price = df["加价后单价"].map(to_float) if "加价后单价" in df.columns else pd.Series(dtype=float)
+    price_col = _price_col_for_basis(df, basis)
+    raw_price = df[price_col].map(to_float) if (price_col and price_col in df.columns) else pd.Series(dtype=float)
     unit_qty = df["单位量"].map(to_float) if "单位量" in df.columns else pd.Series(dtype=float)
 
     min_unit_price = raw_price
@@ -319,6 +346,7 @@ def bom_expand(
     sku_key: str,
     plan_qty: float,
     *,
+    basis: ProfitBasis = "store",
     order_date: Optional[date] = None,
     lead_days: int = 0,
     loss_rate: float = 0.0,
@@ -367,7 +395,7 @@ def bom_expand(
         ])
 
     sku_key_to_sheet = _build_sku_key_to_sheet(sheets)
-    catalog = _build_material_catalog(sheets)
+    catalog = _build_material_catalog(sheets, basis=basis)
 
     raw_entries = _collect_bom_entries(
         sheets, sku_key, sku_key_to_sheet, visited=[sku_key], depth=1
@@ -478,6 +506,7 @@ def bom_expand_multi(
     sheets: Dict[str, pd.DataFrame],
     sku_plan: Dict[str, float],
     *,
+    basis: ProfitBasis = "store",
     order_date: Optional[date] = None,
     default_lead_days: int = 3,
     default_loss_rate: float = 0.0,
@@ -515,6 +544,7 @@ def bom_expand_multi(
             sku_key,
             qty,
             order_date=order_date,
+            basis=basis,
             lead_days=default_lead_days,
             loss_rate=default_loss_rate,
             safety_stock=default_safety_stock,

@@ -633,7 +633,7 @@ with tab6:
     plans: dict = st.session_state["production_plans"]
 
     # ── Controls ─────────────────────────────────────────────────────
-    col_ctrl1, col_ctrl2, col_ctrl3, col_ctrl4 = st.columns([2, 2, 1, 1])
+    col_ctrl1, col_ctrl2, col_ctrl3, col_ctrl4, col_ctrl5 = st.columns([2, 2, 1, 1, 1])
 
     with col_ctrl1:
         scenario_opts = [""] + list(plans.keys())
@@ -666,6 +666,16 @@ with tab6:
             value=0,
             key="prep_loss_rate",
         ) / 100.0
+
+    with col_ctrl5:
+        basis_opts = ["store", "factory"]
+        basis_label = {"store": "门店(加价后单价)", "factory": "出厂(加价前单价)"}
+        selected_basis = st.selectbox(
+            "单价口径",
+            options=basis_opts,
+            format_func=lambda x: basis_label[x],
+            key="prep_basis",
+        )
 
     col_date1, col_date2, col_date3 = st.columns([1, 1, 2])
     with col_date1:
@@ -723,6 +733,7 @@ with tab6:
                             wb.sheets,
                             sku_qty,
                             order_date=target_date,
+                            basis=selected_basis,
                             default_lead_days=default_ld,
                             default_loss_rate=default_loss,
                             default_safety_stock=0.0,
@@ -849,7 +860,7 @@ with tab7:
     _init_session()
     plans: dict = st.session_state["production_plans"]
 
-    col_ps1, col_ps2, col_ps3, col_ps4 = st.columns([2, 2, 1, 1])
+    col_ps1, col_ps2, col_ps3, col_ps4, col_ps5 = st.columns([2, 2, 1, 1, 1])
 
     with col_ps1:
         ps_scenario_opts = [""] + list(plans.keys())
@@ -880,6 +891,16 @@ with tab7:
             value=0,
             key="ps_loss_rate",
         ) / 100.0
+
+    with col_ps5:
+        basis_opts = ["store", "factory"]
+        basis_label = {"store": "门店(加价后单价)", "factory": "出厂(加价前单价)"}
+        ps_basis = st.selectbox(
+            "单价口径",
+            options=basis_opts,
+            format_func=lambda x: basis_label[x],
+            key="ps_basis",
+        )
 
     col_ps_date1, col_ps_date2, col_ps_date3 = st.columns([1, 1, 2])
     with col_ps_date1:
@@ -934,6 +955,7 @@ with tab7:
                             wb.sheets,
                             sku_qty,
                             order_date=target_date,
+                            basis=ps_basis,
                             default_lead_days=ps_lead_days,
                             default_loss_rate=ps_loss_rate,
                             default_safety_stock=0.0,
