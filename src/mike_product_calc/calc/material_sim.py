@@ -174,21 +174,44 @@ class ScenarioStore:
 
 # ── Core simulation ────────────────────────────────────────────────────────────
 
+def _price_col_for_basis(df: pd.DataFrame, basis: ProfitBasis) -> Optional[str]:
+    """Select the correct price column from 总原料成本表.
+
+    Convention (per Ud Lee):
+    - 加价前单价 = 出厂单价 (factory)
+    - 加价后单价 = 门店单价 (store)
+    """
+
+    # Prefer explicit column names.
+    if basis == "factory" and "加价前单价" in df.columns:
+        return "加价前单价"
+    if basis == "store" and "加价后单价" in df.columns:
+        return "加价后单价"
+
+    # Fallbacks for older/variant headers.
+    # 兼容不同表头命名：优先“原料价格”，其次“单价”
+    return next((c for c in df.columns if "原料价格" in c), None) or next(
+        (c for c in df.columns if "单价" in c),
+        None,
+    )
+
+
 def _ingredient_price_map(
     sheets: Dict[str, pd.DataFrame],
+    *,
+    basis: ProfitBasis,
 ) -> Dict[str, float]:
     """Return {item_name: min_unit_cost} from 总原料成本表.
 
     Business rule:
-    - 原料价格 / 单位量 = 最小单位成本
+    - 价格 / 单位量 = 最小单位成本
     - 产品配方/出品表中的用量，按“最小单位”解释
     """
     df = sheets.get("总原料成本表")
     if df is None:
         return {}
 
-    # 兼容不同表头命名：优先“原料价格”，其次“单价”
-    price_col = next((c for c in df.columns if "原料价格" in c), None) or next((c for c in df.columns if "单价" in c), None)
+    price_col = _price_col_for_basis(df, basis)
     unit_qty_col = next((c for c in df.columns if "单位量" in c or "单位数量" in c), None)
     name_col = next((c for c in df.columns if "品项名称" in c), None)
     if not price_col or not name_col:
@@ -205,7 +228,7 @@ def _ingredient_price_map(
         if price is None or price <= 0:
             continue
 
-        # 最小单位成本 = 原料价格 / 单位量
+        # 最小单位成本 = 价格 / 单位量
         # 如果单位量缺失，回退为旧逻辑（按价格直接当单位成本）
         min_unit_cost = (price / unit_qty) if (unit_qty is not None and unit_qty > 0) else price
         if min_unit_cost > 0:
@@ -252,7 +275,7 @@ def simulate_scenario(
     df = sku_profit_table(sheets, basis=basis, only_status=None)
 
     # 2. Build adjusted unit-price map
-    base_prices = _ingredient_price_map(sheets)
+    base_prices = _ingredient_price_map(sheets, basis=basis)
     overrides = _adjust_map(scenario.adjustments)
     unit_qty_map = _ingredient_unit_qty_map(sheets)
     # UI 输入口径与“总原料成本表”一致（原料价格），换算到最小单位成本再参与计算
