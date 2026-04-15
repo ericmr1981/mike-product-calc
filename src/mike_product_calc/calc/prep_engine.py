@@ -159,12 +159,26 @@ def _build_material_catalog(sheets: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     if df is None:
         return pd.DataFrame(columns=["name", "category", "order_unit", "unit_price", "unit_qty", "status"])
 
+    # NOTE: “备料计划/采购建议”中的成本口径必须与「SKU 毛利分析（双口径）」一致。
+    # Unified rule (store-basis by default in this module):
+    #   最小单位成本 = 加价后单价 / 单位量
+    #   单位量缺失/<=0 → 回退为旧逻辑（直接用单价）
+    raw_price = df["加价后单价"].map(to_float) if "加价后单价" in df.columns else pd.Series(dtype=float)
+    unit_qty = df["单位量"].map(to_float) if "单位量" in df.columns else pd.Series(dtype=float)
+
+    min_unit_price = raw_price
+    if not unit_qty.empty:
+        # Vectorized safe divide: if qty invalid → keep raw_price
+        q = unit_qty.where(unit_qty > 0)
+        min_unit_price = raw_price.where(q.isna(), raw_price / q)
+
     out = pd.DataFrame({
         "name":     df["品项名称"].fillna("").astype(str).map(str.strip),
         "category": df["品项类别"].fillna("").astype(str).map(str.strip) if "品项类别" in df.columns else "",
         "order_unit": df["订货单位"].fillna("").astype(str).map(str.strip) if "订货单位" in df.columns else "",
-        "unit_price": df["加价后单价"].map(to_float) if "加价后单价" in df.columns else pd.Series(dtype=float),
-        "unit_qty":  df["单位量"].map(to_float) if "单位量" in df.columns else pd.Series(dtype=float),
+        # unit_price here means “min-unit cost” (already divided by unit_qty when available)
+        "unit_price": min_unit_price,
+        "unit_qty":  unit_qty,
         "status":    df["生效状态"].fillna("").astype(str).map(str.strip) if "生效状态" in df.columns else "",
     })
     out = out[out["name"] != ""].drop_duplicates(subset=["name"]).reset_index(drop=True)
