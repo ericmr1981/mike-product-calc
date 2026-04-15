@@ -46,12 +46,17 @@ def test_sku_profit_table_factory_and_store_delta():
 
     df_f = sku_profit_table(sheets, basis="factory", only_status="上线")
     assert df_f.shape[0] == 1
-    assert abs(df_f.loc[0, "gross_margin"] - 0.5) < 1e-9
-    assert df_f.loc[0, "margin_delta"] == 0.0
+    # unified cost uses 产品出品表_* line costs (fallback to 总成本 when qty missing)
+    # total cost = 1 + 2 = 3
+    assert abs(df_f.loc[0, "cost"] - 3.0) < 1e-9
+    assert abs(df_f.loc[0, "gross_margin"] - ((20 - 3) / 20)) < 1e-9
+    assert abs(df_f.loc[0, "margin_delta"] - (((20 - 3) / 20) - 0.5)) < 1e-9
 
     df_s = sku_profit_table(sheets, basis="store", only_status="上线")
-    assert abs(df_s.loc[0, "gross_margin"] - 0.4) < 1e-9
-    assert df_s.loc[0, "margin_delta"] == 0.0
+    # total store cost = 1.1 + 2.2 = 3.3
+    assert abs(df_s.loc[0, "cost"] - 3.3) < 1e-9
+    assert abs(df_s.loc[0, "gross_margin"] - ((20 - 3.3) / 20)) < 1e-9
+    assert abs(df_s.loc[0, "margin_delta"] - (((20 - 3.3) / 20) - 0.4)) < 1e-9
 
 
 def test_margin_delta_report_orders_top_offenders():

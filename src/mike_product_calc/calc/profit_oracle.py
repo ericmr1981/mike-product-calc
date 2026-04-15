@@ -42,7 +42,9 @@ def sku_profit_consistency_table(
     "与Excel交叉验证误差<0.01元".
     """
 
-    df = sku_profit_table(sheets, basis=basis, only_status=only_status)
+    # Oracle is a cross-check against workbook's own (price, cost, margin).
+    # It must use workbook cost columns, not the unified recomputed cost.
+    df = sku_profit_table(sheets, basis=basis, only_status=only_status, cost_mode="workbook")
     if df.empty:
         return df
 

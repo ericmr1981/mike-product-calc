@@ -5,7 +5,13 @@ from typing import Iterable, Optional
 
 import pandas as pd
 
-from .profit import ProfitBasis, _build_product_key, _to_float, ingredient_catalog
+from .profit import (
+    ProfitBasis,
+    _build_product_key,
+    _ingredient_min_unit_cost_map,
+    _to_float,
+    ingredient_catalog,
+)
 
 
 # Categories treated as fixed cost — sourced from 总原料成本表.品项类别
@@ -76,8 +82,11 @@ def sku_ingredient_lines(
     name_to_cat = dict(zip(cat["name"], cat["category"]))
 
     qty_col = "用量"
+    # Unified rule: unit_cost comes from 总原料成本表 (price/unit_qty),
+    # with fallback to workbook columns if present.
     unit_col = "门店单位成本" if basis == "store" else "单位成本"
     total_col = "门店总成本" if basis == "store" else "总成本"
+    unit_cost_map = _ingredient_min_unit_cost_map(sheets, basis=basis)
 
     part = df_out.loc[keys_ser == product_key].copy()
     if part.empty:
@@ -90,15 +99,34 @@ def sku_ingredient_lines(
     item = item.fillna("").astype(str).map(str.strip)
 
     part["qty"] = part[qty_col].map(_to_float) if qty_col in part.columns else None
-    part["unit_cost"] = part[unit_col].map(_to_float) if unit_col in part.columns else None
-    part["total_cost"] = part[total_col].map(_to_float) if total_col in part.columns else None
+
+    # unit_cost: prefer computed min_unit_cost from 总原料成本表, else fallback to workbook column.
+    unit_cost_from_map = item.map(lambda x: unit_cost_map.get(str(x).strip()))
+    unit_cost_series = unit_cost_from_map
+    fallback_unit_cost = part[unit_col].map(_to_float) if unit_col in part.columns else None
+    if fallback_unit_cost is not None:
+        unit_cost_series = unit_cost_series.where(unit_cost_series.notna(), fallback_unit_cost)
+
+    # total_cost: only compute qty * unit_cost when unit_cost comes from map.
+    # Otherwise, prefer workbook total_cost column (it may include extra allocations).
+    computed_total = None
+    if part["qty"] is not None:
+        computed_total = part["qty"] * unit_cost_from_map
+
+    fallback_total_cost = part[total_col].map(_to_float) if total_col in part.columns else None
+    if computed_total is not None:
+        total_cost_series = computed_total
+        if fallback_total_cost is not None:
+            total_cost_series = total_cost_series.where(total_cost_series.notna(), fallback_total_cost)
+    else:
+        total_cost_series = fallback_total_cost
 
     out = pd.DataFrame(
         {
             "item": item,
             "qty": part["qty"],
-            "unit_cost": part["unit_cost"],
-            "total_cost": part["total_cost"],
+            "unit_cost": unit_cost_series,
+            "total_cost": total_cost_series,
             "category": item.map(lambda x: name_to_cat.get(str(x).strip(), "")),
         }
     )
