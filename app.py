@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import io
 from datetime import date, timedelta
 import os
 from pathlib import Path
@@ -66,11 +67,6 @@ st.set_page_config(page_title="mike-product-calc", layout="wide")
 
 st.title("蜜可诗产品经营决策台 (mike-product-calc)")
 st.caption("当前版本：Excel 解析 / 校验、SKU 毛利分析（双口径）、F-002 oracle、F-003 第一版反推定价。")
-
-import os as _os
-_default_xlsx = _os.environ.get("MIKE_DEFAULT_XLSX", "")
-if _default_xlsx:
-    import io
 
 # ── 上传文件持久化（session 级）──────────────────────────────────────
 _default_file_persistent = st.session_state.get("_uploaded_bytes")
