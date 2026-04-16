@@ -4,5 +4,9 @@ version = "0.2.0"
 description = "蜜可诗产品经营决策台"
 requires-python = ">=3.9"
 
+[project.scripts]
+mike-product-calc = "mike_product_calc.cli:main"
+mpc = "mike_product_calc.cli:main"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

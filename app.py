@@ -63,6 +63,7 @@ from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.data.validator import issues_to_dataframe, validate_workbook
 from mike_product_calc.data.shared import build_product_key
 from mike_product_calc.model.production import ProductionPlan, ProductionRow
+from mike_product_calc.state import get_store
 
 
 st.set_page_config(page_title="mike-product-calc", layout="wide")
@@ -174,7 +175,12 @@ with st.expander("📁 数据文件管理（永久保存，可删除/替换）",
         st.rerun()
 
 
-def _resolve_active_workbook_bytes() -> tuple[bytes, str]:
+def _resolve_active_workbook() -> tuple[bytes, str, str]:
+    """Return (xlsx_bytes, display_name, resolved_path).
+
+    resolved_path is a real filesystem path usable by CLI/state.
+    """
+
     # 1) active from registry
     fid = st.session_state.get('active_file_id', '')
     if fid:
@@ -182,19 +188,19 @@ def _resolve_active_workbook_bytes() -> tuple[bytes, str]:
             if str(it.get('id')) == str(fid):
                 fp = UPLOAD_DIR / str(it.get('saved_name'))
                 if fp.exists():
-                    return fp.read_bytes(), str(it.get('orig_name') or fp.name)
+                    return fp.read_bytes(), str(it.get('orig_name') or fp.name), str(fp)
 
     # 2) fallback: env var
     _default_xlsx = os.environ.get('MIKE_DEFAULT_XLSX', '')
     if _default_xlsx and Path(_default_xlsx).exists():
         p = Path(_default_xlsx)
-        return p.read_bytes(), p.name
+        return p.read_bytes(), p.name, str(p)
 
     raise FileNotFoundError('No workbook selected/uploaded')
 
 
 try:
-    workbook_bytes, workbook_name = _resolve_active_workbook_bytes()
+    workbook_bytes, workbook_name, workbook_path = _resolve_active_workbook()
 except FileNotFoundError:
     st.info('请先在上方上传/选择 xlsx 文件开始。')
     st.stop()
@@ -213,9 +219,176 @@ with st.spinner("解析中..."):
 
 sheet_names = list(wb.sheets.keys())
 
-# ── Tab4 状态初始化（原料价格模拟器 session 级存储）─────────────────────
-if "sim_store" not in st.session_state:
-    st.session_state["sim_store"] = ScenarioStore()
+
+# ── CLI/UI shared state (disk) ─────────────────────────────────────────
+
+_store = get_store()
+if "mpc_state_name" not in st.session_state:
+    st.session_state["mpc_state_name"] = "default"
+
+
+def _load_state_into_session(state_name: str) -> None:
+    """Load disk state into Streamlit session_state once."""
+    state = _store.load(state_name)
+
+    # Always keep workbook path in sync (so CLI can operate on the same file)
+    if workbook_path:
+        state.xlsx_path = str(Path(workbook_path).resolve())
+
+    # Init sim store
+    if "sim_store" not in st.session_state:
+        st.session_state["sim_store"] = ScenarioStore()
+
+    # Load material sim versions
+    sim_store: ScenarioStore = st.session_state["sim_store"]
+    if state.material_sim_versions and not sim_store.list_names():
+        for nm, adjs in state.material_sim_versions.items():
+            adjustments = tuple(
+                MaterialPriceAdjustment(item=str(a.get("item", "")).strip(), new_unit_price=float(a.get("new_unit_price", 0)))
+                for a in (adjs or [])
+                if str(a.get("item", "")).strip()
+            )
+            sim_store.put(Scenario(name=str(nm), adjustments=adjustments))
+
+    # Production plans
+    if "production_plans" not in st.session_state:
+        st.session_state["production_plans"] = {}
+    if "current_plan_name" not in st.session_state:
+        st.session_state["current_plan_name"] = None
+
+    plans: dict = st.session_state["production_plans"]
+    if state.production_plans and not plans:
+        for plan_name, rows in state.production_plans.items():
+            rr: list[ProductionRow] = []
+            for r in (rows or []):
+                rr.append(
+                    ProductionRow(
+                        date=str(r.get("date", "")),
+                        sku_key=str(r.get("sku_key", "")),
+                        spec=str(r.get("spec", "")),
+                        qty=float(r.get("qty", 0) or 0),
+                        plan_type=str(r.get("plan_type", "sales")) if r.get("plan_type") else "sales",
+                    )
+                )
+            plans[str(plan_name)] = rr
+
+    # Portfolio versions (A/B/C)
+    for slot, key in (("A", "portfolio_A"), ("B", "portfolio_B"), ("C", "portfolio_C")):
+        if key not in st.session_state:
+            st.session_state[key] = {}
+        if state.portfolio_versions and state.portfolio_versions.get(slot) and not st.session_state[key]:
+            st.session_state[key] = dict(state.portfolio_versions.get(slot) or {})
+
+    # Persist updated xlsx_path back to disk (best-effort)
+    state.touch()
+    _store.save(state)
+
+
+def _save_session_into_state(state_name: str) -> None:
+    """Persist current Streamlit session_state into disk state."""
+    state = _store.load(state_name)
+
+    # workbook path
+    if workbook_path:
+        state.xlsx_path = str(Path(workbook_path).resolve())
+
+    # sim versions
+    sim_store: ScenarioStore = st.session_state.get("sim_store") or ScenarioStore()
+    sim_versions: dict = {}
+    for nm in sim_store.list_names():
+        sc = sim_store.get(nm)
+        if not sc:
+            continue
+        sim_versions[nm] = [
+            {"item": a.item, "new_unit_price": float(a.new_unit_price)}
+            for a in (sc.adjustments or ())
+            if str(a.item).strip()
+        ]
+    state.material_sim_versions = sim_versions
+
+    # production plans
+    plans: dict = st.session_state.get("production_plans") or {}
+    out_plans: dict = {}
+    for plan_name, rows in plans.items():
+        out_plans[str(plan_name)] = [
+            {"date": r.date, "sku_key": r.sku_key, "spec": r.spec, "qty": float(r.qty), "plan_type": r.plan_type}
+            for r in (rows or [])
+        ]
+    state.production_plans = out_plans
+
+    # portfolios
+    state.portfolio_versions = {
+        "A": dict(st.session_state.get("portfolio_A") or {}),
+        "B": dict(st.session_state.get("portfolio_B") or {}),
+        "C": dict(st.session_state.get("portfolio_C") or {}),
+    }
+
+    state.touch()
+    _store.save(state)
+
+
+def _auto_save() -> None:
+    """Save current UI session to disk state if auto-save is enabled."""
+    if st.session_state.get("mpc_auto_save", True):
+        _save_session_into_state(st.session_state.get("mpc_state_name", "default"))
+
+
+# UI control for state management (sidebar)
+with st.sidebar:
+    st.markdown("### 💾 CLI/UI State")
+    existing_states = ["default"] + [s for s in _store.list_states() if s != "default"]
+    st.selectbox(
+        "State 名称",
+        options=existing_states,
+        index=existing_states.index(st.session_state.get("mpc_state_name", "default"))
+        if st.session_state.get("mpc_state_name", "default") in existing_states
+        else 0,
+        key="mpc_state_name",
+    )
+
+    # Auto-save toggle (default ON)
+    if "mpc_auto_save" not in st.session_state:
+        st.session_state["mpc_auto_save"] = True
+    auto_save = st.checkbox("Auto-save（默认开启）", value=st.session_state["mpc_auto_save"],
+                             help="开启后，每次保存版本/方案/计划时自动落盘，无需手动点 Save",
+                             key="mpc_auto_save_chk")
+    st.session_state["mpc_auto_save"] = auto_save
+
+    col_s1, col_s2, col_s3 = st.columns(3)
+    with col_s1:
+        if st.button("⬇️ Load", use_container_width=True):
+            st.session_state.pop("_mpc_state_synced", None)
+            st.rerun()
+    with col_s2:
+        if st.button("⬆️ Save", use_container_width=True):
+            _save_session_into_state(st.session_state["mpc_state_name"])
+            st.success("state 已保存")
+    with col_s3:
+        if st.button("📸 Snapshot", use_container_width=True, help="保存当前 state 的快照"):
+            snaps = _store.list_snapshots(st.session_state["mpc_state_name"])
+            ts = _store.snapshot(st.session_state["mpc_state_name"])
+            st.success(f"快照已保存（{len(snaps)+1} 份，最多保留 {_store.MAX_SNAPSHOTS} 份）")
+
+    # Snapshot list + restore
+    snaps = _store.list_snapshots(st.session_state["mpc_state_name"])
+    if snaps:
+        with st.expander("📸 Snapshots（可回滚）", expanded=False):
+            snap_opts = [f"{s['ts']}" for s in snaps]
+            snap_sel = st.selectbox("选择快照", options=snap_opts, key="_snap_sel")
+            if st.button("↩️ Restore", key="_snap_restore_btn"):
+                sid = next((s["id"] for s in snaps if s["ts"] == snap_sel), None)
+                if sid:
+                    _store.restore_snapshot(sid, st.session_state["mpc_state_name"])
+                    st.session_state.pop("_mpc_state_synced", None)
+                    st.rerun()
+    st.caption(f"Workbook path: {workbook_path}")
+
+
+# One-time sync
+if "_mpc_state_synced" not in st.session_state:
+    _load_state_into_session(st.session_state["mpc_state_name"])
+    st.session_state["_mpc_state_synced"] = True
+
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(["概览/校验", "SKU 毛利分析（双口径）", "Sheet 浏览", "原料价格模拟器", "生产计划录入", "备料计划", "采购建议", "产品组合评估", "多场景对比", "选品优化器", "产能需求估算"])
 
@@ -416,6 +589,7 @@ with tab4:
     if col_save.button("💾 保存版本", disabled=not (version_name and adjustments)):
         store.put(Scenario(name=version_name, adjustments=tuple(adjustments)))
         st.success(f"已保存版本：{version_name}")
+        _auto_save()
         st.rerun()
     if col_clear.button("🗑 清空所有版本"):
         store.clear()
@@ -658,6 +832,7 @@ with tab5:
             plans[save_name] = rows
             st.session_state["current_plan_name"] = save_name
             st.success(f"已保存：{save_name}（{len(rows)} 行）")
+            _auto_save()
             st.rerun()
 
     with col_save2:
@@ -1251,6 +1426,7 @@ with tab8:
                 for k, v in qty_values.items():
                     st.session_state[f"_last_qty_{k}"] = v
                 st.success("✅ 方案 A 已保存")
+                _auto_save()
 
         with col_save_b:
             if st.button("💾 保存为方案 B", key="save_portfolio_B"):
@@ -1258,6 +1434,7 @@ with tab8:
                 for k, v in qty_values.items():
                     st.session_state[f"_last_qty_{k}"] = v
                 st.success("✅ 方案 B 已保存")
+                _auto_save()
 
         with col_save_c:
             if st.button("💾 保存为方案 C", key="save_portfolio_C"):
@@ -1265,6 +1442,7 @@ with tab8:
                 for k, v in qty_values.items():
                     st.session_state[f"_last_qty_{k}"] = v
                 st.success("✅ 方案 C 已保存")
+                _auto_save()
 
         with col_sku_count:
             st.metric("SKU 数量", live_result.sku_count)
