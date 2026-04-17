@@ -72,6 +72,11 @@ from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.data.validator import issues_to_dataframe, issues_to_report, validate_workbook
 from mike_product_calc.model.production import ProductionPlan, ProductionRow
 from mike_product_calc.state import MpcState, StateStore, get_store, _ensure_xlsx
+from mike_product_calc.data.upload import (
+    UploadRegistry,
+    UploadRegistryItem,
+    DuplicateFileError,
+)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -765,6 +770,150 @@ def _add_state_subparser(sub: argparse._SubParsersAction) -> None:
     sp.set_defaults(func=cmd_state_snapshots_list)
 
 
+def cmd_file(args: argparse.Namespace) -> int:
+    """File management: upload / list / select / delete."""
+    reg = UploadRegistry()
+    sub = args.file_subcommand
+
+    # ── file upload ───────────────────────────────────────────────────────────
+    if sub == "upload":
+        path = Path(args.path)
+        if not path.exists():
+            sys.stderr.write(f"Error: file not found: {path}\n")
+            raise SystemExit(1)
+        data = path.read_bytes()
+        orig_name = path.name
+
+        replace_id = getattr(args, "replace_id", None)
+        replace = getattr(args, "replace", False) or bool(replace_id)
+
+        try:
+            item = reg.upload(
+                data,
+                orig_name,
+                replace=replace,
+                replace_id=replace_id,
+                skip_duplicate=True,
+            )
+        except DuplicateFileError as exc:
+            # Already exists — return it as-is
+            existing = reg.find_by_id(exc.existing_id)
+            payload = {
+                "cmd": "file-upload",
+                "orig_name": orig_name,
+                "skipped": True,
+                "existing_id": exc.existing_id,
+                "existing_name": existing.orig_name if existing else None,
+                "item": existing.to_dict() if existing else None,
+            }
+            _dump_json(payload, out=args.out)
+            return 0
+
+        # Optionally set as active file in state
+        if getattr(args, "select", False):
+            _set_state_xlsx(str(reg.upload_dir / item.saved_name))
+
+        payload = {
+            "cmd": "file-upload",
+            "orig_name": item.orig_name,
+            "id": item.id,
+            "size": item.size,
+            "sha256": item.sha256,
+            "uploaded_at": item.uploaded_at,
+            "selected": getattr(args, "select", False),
+        }
+        _dump_json(payload, out=args.out)
+        return 0
+
+    # ── file list ─────────────────────────────────────────────────────────────
+    if sub == "list":
+        items = reg.list_all()
+        payload = {
+            "cmd": "file-list",
+            "count": len(items),
+            "disk_usage_bytes": reg.disk_usage_bytes(),
+            "items": [it.to_dict() for it in items],
+        }
+        _dump_json(payload, out=args.out)
+        return 0
+
+    # ── file select ───────────────────────────────────────────────────────────
+    if sub == "select":
+        file_id = getattr(args, "id", None)
+        if not file_id:
+            sys.stderr.write("Error: --id required for file select\n")
+            raise SystemExit(1)
+
+        item = reg.find_by_id(file_id)
+        if item is None:
+            sys.stderr.write(f"Error: file not found: {file_id}\n")
+            raise SystemExit(1)
+
+        fp = reg.resolve_path(file_id)
+        if fp is None:
+            sys.stderr.write(f"Error: file exists in registry but not on disk: {file_id}\n")
+            raise SystemExit(1)
+
+        _set_state_xlsx(str(fp))
+        payload = {
+            "cmd": "file-select",
+            "id": item.id,
+            "orig_name": item.orig_name,
+            "xlsx_path": str(fp),
+            "state_xlsx_updated": True,
+        }
+        _dump_json(payload, out=args.out)
+        return 0
+
+    # ── file delete ───────────────────────────────────────────────────────────
+    if sub == "delete":
+        file_id = getattr(args, "id", None)
+        if not file_id:
+            sys.stderr.write("Error: --id required for file delete\n")
+            raise SystemExit(1)
+        try:
+            deleted = reg.delete(file_id, missing_ok=False)
+        except FileNotFoundError:
+            sys.stderr.write(f"Error: file not found: {file_id}\n")
+            raise SystemExit(1)
+        payload = {"cmd": "file-delete", "id": file_id, "deleted": deleted}
+        _dump_json(payload, out=args.out)
+        return 0
+
+    # ── file info ─────────────────────────────────────────────────────────────
+    if sub == "info":
+        file_id = getattr(args, "id", None)
+        if not file_id:
+            sys.stderr.write("Error: --id required for file info\n")
+            raise SystemExit(1)
+        item = reg.find_by_id(file_id)
+        if item is None:
+            sys.stderr.write(f"Error: file not found: {file_id}\n")
+            raise SystemExit(1)
+        fp = reg.resolve_path(file_id)
+        payload = {
+            "cmd": "file-info",
+            "item": item.to_dict(),
+            "disk_path": str(fp) if fp else None,
+            "disk_exists": fp.exists() if fp else False,
+        }
+        _dump_json(payload, out=args.out)
+        return 0
+
+    # fallback — shouldn't reach here
+    _dump_json({"cmd": "file", "subcommands": ["upload", "list", "select", "delete", "info"]})
+    return 0
+
+
+def _set_state_xlsx(xlsx_path: str) -> None:
+    """Update the default state's xlsx_path to point to the given file."""
+    store = get_store()
+    state = store.load("default")
+    state.xlsx_path = xlsx_path
+    state.touch()
+    store.save(state)
+
+
 def _ensure_xlsx_from_args(args: argparse.Namespace) -> str:
     """Resolve xlsx path: CLI arg → state → error."""
     cli_xlsx = getattr(args, "xlsx", None)
@@ -942,6 +1091,37 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument("--format", choices=["json"], default="json")
     opt.add_argument("--out", help="Write JSON to file")
     opt.set_defaults(func=cmd_optimizer)
+
+    # ── file ──────────────────────────────────────────────────────────────────
+    f = sub.add_parser("file", help="File management: upload / list / select / delete / info")
+    f.set_defaults(func=cmd_file)
+    fm = f.add_subparsers(dest="file_subcommand")
+
+    # upload
+    fu = fm.add_parser("upload", help="Upload a file and register it")
+    fu.add_argument("path", help="Path to the .xlsx file to upload")
+    fu.add_argument("--select", action="store_true", help="Also select this file as active")
+    fu.add_argument("--replace-id", help="Replace existing file by ID")
+    fu.add_argument("--out", help="Write JSON output to file")
+
+    # list
+    fl = fm.add_parser("list", help="List all registered files")
+    fl.add_argument("--out", help="Write JSON output to file")
+
+    # select
+    fs = fm.add_parser("select", help="Set active file (updates default state xlsx_path)")
+    fs.add_argument("--id", required=True, help="File ID (or prefix)")
+    fs.add_argument("--out", help="Write JSON output to file")
+
+    # delete
+    fd = fm.add_parser("delete", help="Delete a registered file")
+    fd.add_argument("--id", required=True, help="File ID (or prefix)")
+    fd.add_argument("--out", help="Write JSON output to file")
+
+    # info
+    fi = fm.add_parser("info", help="Show details of a registered file")
+    fi.add_argument("--id", required=True, help="File ID (or prefix)")
+    fi.add_argument("--out", help="Write JSON output to file")
 
     # ── state ─────────────────────────────────────────────────────────────────
     _add_state_subparser(sub)
