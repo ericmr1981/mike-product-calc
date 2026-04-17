@@ -802,6 +802,9 @@ with tab5:
     else:
         _editor_sku_options = _all_skus
 
+    # Ensure spec column is string (NaN from CSV import would otherwise make it float)
+    editor_df["规格"] = editor_df["规格"].fillna("").astype(str)
+
     # data_editor
     st.caption("直接编辑下表，或上传 CSV 回填。日期格式：YYYY-MM-DD")
     edited_df = st.data_editor(
