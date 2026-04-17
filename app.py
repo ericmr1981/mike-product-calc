@@ -162,6 +162,24 @@ with st.expander("📁 数据文件管理（永久保存，可删除/替换）",
     up = st.file_uploader('📂 上传/新增 蜜可诗产品库.xlsx', type=['xlsx'], key='xlsx_upload')
     if up is not None:
         b = up.getvalue()
+        sha = _sha256_bytes(b)
+
+        # Guard: skip if already processed this upload in this session
+        if st.session_state.get('_last_upload_sha') == sha:
+            # Clear the widget value so it doesn't re-trigger on next rerun
+            st.session_state['xlsx_upload'] = None
+            st.rerun()
+
+        # Deduplicate: if this exact content is already in registry, reuse it
+        existing = _load_registry()
+        dup = next((it for it in existing if it.get('sha256') == sha), None)
+        if dup:
+            st.session_state['active_file_id'] = dup['id']
+            st.session_state['_last_upload_sha'] = sha
+            st.session_state['xlsx_upload'] = None
+            st.warning(f"该文件已存在（{dup['orig_name']}），已选中。")
+            st.rerun()
+
         entry = _save_upload(b, getattr(up, 'name', 'workbook.xlsx'))
         items = _load_registry()
         items.insert(0, entry)
@@ -171,6 +189,9 @@ with st.expander("📁 数据文件管理（永久保存，可删除/替换）",
             _delete_file(selected_id)
 
         st.session_state['active_file_id'] = entry['id']
+        st.session_state['_last_upload_sha'] = sha
+        # Clear widget to prevent re-trigger
+        st.session_state['xlsx_upload'] = None
         st.success(f"已保存：{entry['orig_name']}（{entry['id'][:8]}）")
         st.rerun()
 
@@ -196,6 +217,22 @@ def _resolve_active_workbook() -> tuple[bytes, str, str]:
         p = Path(_default_xlsx)
         return p.read_bytes(), p.name, str(p)
 
+    # 3) fallback: auto-select the first xlsx in UPLOAD_DIR
+    if UPLOAD_DIR.exists():
+        for candidate in sorted(UPLOAD_DIR.glob('*.xlsx')):
+            if candidate.stat().st_size > 0:
+                entry = {
+                    'id': candidate.stem,
+                    'orig_name': candidate.name,
+                    'saved_name': candidate.name,
+                }
+                return candidate.read_bytes(), candidate.name, str(candidate)
+
+    # 4) fallback: use default xlsx in data/ root
+    for default in sorted(Path('data').glob('*.xlsx')):
+        if default.stat().st_size > 0:
+            return default.read_bytes(), default.name, str(default)
+
     raise FileNotFoundError('No workbook selected/uploaded')
 
 
@@ -210,6 +247,8 @@ def _load_and_validate(bytes_data: bytes):
         p = Path(td) / "workbook.xlsx"
         p.write_bytes(bytes_data)
         wb = load_workbook(p)
+        # wb is WorkbookData; wb.sheets is Dict[str, pd.DataFrame]
+        # validate_workbook expects Dict[str, pd.DataFrame]
         issues = validate_workbook(wb.sheets)
         return wb, issues
 
