@@ -734,8 +734,14 @@ with tab5:
     st.divider()
     st.subheader("计划数据录入")
 
-    # Template download
-    template_df = pd.DataFrame(columns=["日期", "SKU", "规格", "数量", "计划类型"])
+    # Template download — includes one example row so users see correct SKU format
+    template_df = pd.DataFrame([{
+        "日期": "2026-04-24",
+        "SKU": "Gelato|榛子巧克力布朗尼|小杯",
+        "规格": "小杯",
+        "数量": 36,
+        "计划类型": "销量计划",
+    }])
     st.download_button(
         "📥 下载 CSV 模板",
         data=template_df.to_csv(index=False).encode("utf-8-sig"),
@@ -751,6 +757,10 @@ with tab5:
             import_df = pd.read_csv(uploaded_csv)
             required_cols = {"日期", "SKU", "规格", "数量", "计划类型"}
             if required_cols.issubset(set(import_df.columns)):
+                # Validate SKU format (must contain '|' separator)
+                invalid_skus = [str(s) for s in import_df["SKU"] if pd.notna(s) and "|" not in str(s)]
+                if invalid_skus:
+                    st.warning(f"⚠️ {len(invalid_skus)} 个 SKU 格式不正确，示例: {invalid_skus[0]}\n正确格式: 产品线|品名|规格（如 Gelato|榛子巧克力布朗尼|小杯）")
                 st.session_state["_imported_rows"] = import_df.to_dict("records")
                 st.success(f"已读取 {len(import_df)} 行，可用于回填")
             else:
@@ -814,20 +824,23 @@ with tab5:
     )
 
     col_save1, col_save2, col_save3 = st.columns([1, 1, 2])
+    _PLAN_TYPE_MAP = {"销量计划": "sales", "生产计划": "production"}
+
     with col_save1:
         if st.button("✅ 保存", key="save_plan_btn"):
             save_name = edit_plan if edit_plan != "(新建空计划)" else (new_name or f"未命名计划_{len(plans)}")
             rows = []
             for _, row in edited_df.iterrows():
                 _d = row["日期"]
-                _d_str = _date_str(_parse_date(_d)) if not isinstance(_d, str) else _d
+                _d_str = _date_str(_parse_date(_d))
                 if _d_str:
+                    _raw_pt = str(row["计划类型"]) if pd.notna(row["计划类型"]) else plan_type_filter
                     rows.append(ProductionRow(
                         date=_d_str,
                         sku_key=str(row["SKU"]) if pd.notna(row["SKU"]) else "",
                         spec=str(row["规格"]) if pd.notna(row["规格"]) else "",
                         qty=float(row["数量"]) if pd.notna(row["数量"]) else 0,
-                        plan_type=str(row["计划类型"]) if pd.notna(row["计划类型"]) else plan_type_filter,
+                        plan_type=_PLAN_TYPE_MAP.get(_raw_pt, _raw_pt),
                     ))
             plans[save_name] = rows
             st.session_state["current_plan_name"] = save_name
