@@ -21,7 +21,7 @@
 
 ## 环境要求
 
-- Python 3.10+
+- Python 3.9+
 - pip
 
 ## 安装
@@ -36,11 +36,14 @@ python -m venv .venv
 source .venv/bin/activate      # macOS/Linux
 # .venv\Scripts\activate       # Windows
 
-# 3. 安装依赖
+# 3. 安装依赖（用于 Streamlit UI）
 pip install -U pip
 pip install -r requirements.txt
 
-# 4. 启动（自动加载真实数据，需设置环境变量指向 xlsx）
+# 4. 安装 CLI（用于命令行，无需 PYTHONPATH）
+pip install -e .
+
+# 5. 启动（自动加载真实数据，需设置环境变量指向 xlsx）
 MIKE_DEFAULT_XLSX=/path/to/蜜可诗产品库.xlsx streamlit run app.py
 # 或不上传文件，每次手动上传：
 streamlit run app.py
@@ -52,16 +55,14 @@ streamlit run app.py
 
 ```bash
 # 编译检查
-python -m py_compile src/mike_product_calc/**/*.py
-python -m py_compile app.py
+python -m py_compile src/mike_product_calc/cli.py src/mike_product_calc/state.py src/mike_product_calc/__main__.py
 
-# 自动化测试（22 个测试，全部通过）
-pytest tests/ -v
+# 自动化测试（55 个测试，全部通过）
+pytest tests/ -q
 
-# CLI 校验
-PYTHONPATH=src python3 -m mike_product_calc validate --help
-# 或用脚本（需传入 xlsx 路径）
-bash scripts/validate.sh /path/to/蜜可诗产品库.xlsx
+# CLI 校验（安装后直接使用）
+python3 -m mike_product_calc --help
+python3 -m mike_product_calc state --help
 ```
 
 ## 项目结构
@@ -85,7 +86,7 @@ mike-product-calc/
 │   │   └── capacity.py           # 产能估算（F-011）
 │   └── model/
 │       └── production.py         # 生产计划数据模型（F-005）
-├── tests/                        # pytest 测试（22 tests）
+├── tests/                        # pytest 测试（55 tests，smoke + golden）
 ├── data/                         # 放置蜜可诗产品库.xlsx
 ├── docs/
 │   └── E2E_TEST_PLAN.md         # 端到端测试计划
@@ -94,7 +95,7 @@ mike-product-calc/
 
 ## 技术栈
 
-- **Python 3.10+**
+- **Python 3.9+**
 - **Streamlit** — Web UI
 - **pandas** — 数据处理
 - **numpy** — 向量计算

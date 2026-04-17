@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install pytest pytest-xdist
+
+      - name: Validate entry point
+        run: |
+          python3 -m mike_product_calc --help
+          python3 -m mike_product_calc state --help
+
+      - name: Compile check
+        run: |
+          python3 -m py_compile \
+            src/mike_product_calc/cli.py \
+            src/mike_product_calc/state.py \
+            src/mike_product_calc/__main__.py
+
+      - name: Run tests
+        run: pytest tests/ -q
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Lint
+        run: |
+          pip install ruff
+          ruff check src/
