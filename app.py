@@ -166,8 +166,6 @@ with st.expander("📁 数据文件管理（永久保存，可删除/替换）",
 
         # Guard: skip if already processed this upload in this session
         if st.session_state.get('_last_upload_sha') == sha:
-            # Clear the widget value so it doesn't re-trigger on next rerun
-            st.session_state['xlsx_upload'] = None
             st.rerun()
 
         # Deduplicate: if this exact content is already in registry, reuse it
@@ -176,7 +174,6 @@ with st.expander("📁 数据文件管理（永久保存，可删除/替换）",
         if dup:
             st.session_state['active_file_id'] = dup['id']
             st.session_state['_last_upload_sha'] = sha
-            st.session_state['xlsx_upload'] = None
             st.warning(f"该文件已存在（{dup['orig_name']}），已选中。")
             st.rerun()
 
@@ -190,8 +187,6 @@ with st.expander("📁 数据文件管理（永久保存，可删除/替换）",
 
         st.session_state['active_file_id'] = entry['id']
         st.session_state['_last_upload_sha'] = sha
-        # Clear widget to prevent re-trigger
-        st.session_state['xlsx_upload'] = None
         st.success(f"已保存：{entry['orig_name']}（{entry['id'][:8]}）")
         st.rerun()
 
