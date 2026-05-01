@@ -716,3 +716,117 @@ def gaps_only(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or "is_gap" not in df.columns:
         return df.copy()
     return df[df["is_gap"]].copy()
+
+
+# -------------------------------------------------------------------------------------------------
+# Sales → Production conversion
+# -------------------------------------------------------------------------------------------------
+
+
+def sales_to_production(
+    sales_rows: List["ProductionRow"],
+    sheets: Dict[str, pd.DataFrame],
+    lead_days: int = 1,
+) -> List["ProductionRow"]:
+    """
+    Convert sales plan rows to production plan rows by expanding each sales SKU
+    through the 产品出品表 recipe.
+
+    For each sales row (finished product SKU, qty, date):
+      1. Extract category from SKU key (format: 品类|品名|规格)
+      2. Look up 产品出品表_{category} sheet
+      3. Find recipe rows matching the SKU's 品名+规格
+      4. Collect 主原料 + 配料 as production items
+      5. production_qty = sales_qty × recipe 用量
+      6. production_date = sales_date - lead_days
+      7. Aggregate same production items on same dates
+
+    Returns a list of ProductionRow with plan_type="production".
+    """
+    from mike_product_calc.model.production import ProductionRow
+
+    if not sales_rows or not sheets:
+        return []
+
+    # Group sales rows by category for efficient sheet access
+    # SKU key format: 品类|品名|规格
+    out_rows: Dict[tuple, float] = {}  # (date, sku_key, spec) -> qty
+
+    for row in sales_rows:
+        if row.plan_type != "sales":
+            continue
+        parts = row.sku_key.split("|")
+        if len(parts) < 2:
+            continue
+        category = parts[0].strip()
+        product_name = parts[1].strip()
+        spec = parts[2].strip() if len(parts) > 2 else row.spec
+
+        # Find the matching 产品出品表 sheet
+        sheet_name = None
+        for sname in sheets:
+            if sname.startswith("产品出品表_") and category in sname:
+                sheet_name = sname
+                break
+        if sheet_name is None:
+            continue
+
+        df = sheets[sheet_name]
+        df = df.reset_index(drop=True)
+
+        # Build product keys for this sheet
+        if "品类" not in df.columns or "品名" not in df.columns:
+            continue
+        sheet_keys = build_product_key(df)
+
+        # Find matching rows: match 品类|品名|规格
+        target_key = f"{category}|{product_name}|{spec}" if spec else f"{category}|{product_name}"
+        match_mask = sheet_keys == target_key
+
+        if not match_mask.any():
+            # Try matching by just 品名
+            match_mask = df["品名"].fillna("").astype(str).str.strip() == product_name
+
+        recipe_rows = df[match_mask]
+        if recipe_rows.empty:
+            continue
+
+        # Calculate date
+        try:
+            sales_date = date.fromisoformat(row.date)
+        except Exception:
+            try:
+                sales_date = pd.to_datetime(row.date).date()
+            except Exception:
+                continue
+        prod_date = sales_date - timedelta(days=lead_days)
+        prod_date_str = prod_date.strftime("%Y-%m-%d")
+
+        # For each recipe row, create a production item
+        for _, recipe_row in recipe_rows.iterrows():
+            # Collect 主原料
+            main_material = str(recipe_row.get("主原料", "")).strip()
+            if main_material and main_material.lower() not in ("nan", ""):
+                qty_usage = to_float(recipe_row.get("用量"))
+                if qty_usage is not None and qty_usage > 0:
+                    prod_qty = row.qty * qty_usage
+                    key = (prod_date_str, main_material, "")
+                    out_rows[key] = out_rows.get(key, 0) + prod_qty
+
+            # Collect 配料
+            ingredient = str(recipe_row.get("配料", "")).strip()
+            if ingredient and ingredient.lower() not in ("nan", ""):
+                qty_usage = to_float(recipe_row.get("用量"))
+                if qty_usage is not None and qty_usage > 0:
+                    prod_qty = row.qty * qty_usage
+                    key = (prod_date_str, ingredient, "")
+                    out_rows[key] = out_rows.get(key, 0) + prod_qty
+
+    result = sorted(
+        [
+            ProductionRow(date=d, sku_key=k, spec=s, qty=round(q, 2), plan_type="production")
+            for (d, k, s), q in out_rows.items()
+        ],
+        key=lambda r: (r.date, r.sku_key),
+    )
+    return result

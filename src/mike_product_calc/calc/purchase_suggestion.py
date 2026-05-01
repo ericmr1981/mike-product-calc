@@ -75,15 +75,20 @@ def build_purchase_list(
     has_ld_val = df["latest_order_date"].notna().any() if has_ld_col else False
 
     def make_arrival(row: pd.Series) -> Optional[str]:
-        """Return latest_order_date string if available, else order_date."""
-        if has_ld_col and pd.notna(row.get("latest_order_date")):
-            return str(row["latest_order_date"]).strip()
+        """arrival_date = order_date (target delivery date).
+        latest_order_date from bom_expand_multi is already target_date - lead_days
+        (i.e. the latest ORDER date), NOT the arrival date.
+        """
         if order_date is not None:
             return order_date.strftime("%Y-%m-%d")
         return today.strftime("%Y-%m-%d")
 
     def make_order(row: pd.Series) -> Optional[str]:
-        """order_date = arrival_date - lead_days."""
+        """order_date = latest_order_date (already target_date - lead_days from bom_expand_multi).
+        Fallback: arrival_date - lead_days if latest_order_date is missing.
+        """
+        if has_ld_col and pd.notna(row.get("latest_order_date")):
+            return str(row["latest_order_date"]).strip()
         arrival_str = make_arrival(row)
         lead_days = int(row.get("lead_days", 0) or 0)
         try:
