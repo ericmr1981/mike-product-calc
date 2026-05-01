@@ -765,7 +765,8 @@ with tab5:
     with col_sel1:
         all_plan_names = list(plans.keys())
         _cur = st.session_state.get("current_plan_name")
-        if _cur and _cur in all_plan_names:
+        _prev_widget = st.session_state.get("edit_plan_sel")
+        if _cur and _cur in all_plan_names and _cur != _prev_widget:
             st.session_state["edit_plan_sel"] = _cur
         edit_plan = st.selectbox(
             "✏️ 选择要编辑的场景",
@@ -826,31 +827,41 @@ with tab5:
 
     csv_sales = st.file_uploader("📤 上传 CSV（销售计划，自动保存）", type=["csv"], key="csv_sales")
     if csv_sales:
-        try:
-            import_df = pd.read_csv(csv_sales)
-            cols = {"日期", "SKU", "数量"}
-            if cols.issubset(set(import_df.columns)):
-                csv_name = f"销售CSV_{datetime.now().strftime('%m%d_%H%M')}"
-                imported = []
-                for _, r in import_df.iterrows():
-                    d = _date_str(_parse_date(r["日期"]))
-                    if not d:
-                        continue
-                    imported.append(ProductionRow(
-                        date=d, sku_key=str(r["SKU"]) if pd.notna(r["SKU"]) else "",
-                        spec=str(r.get("规格", "")).strip() if pd.notna(r.get("规格")) else "",
-                        qty=float(r["数量"]) if pd.notna(r["数量"]) else 0, plan_type="sales",
-                    ))
-                plans[csv_name] = imported
-                st.session_state["current_plan_name"] = csv_name
-                st.session_state["_csv_id_sales"] = f"{csv_sales.name}_{csv_sales.size}"
-                _auto_save()
-                st.success(f"✅ 导入 {len(imported)} 行销售计划 → 「{csv_name}」")
-                st.rerun()
-            else:
-                st.error(f"CSV 缺少列: 日期, SKU, 数量")
-        except Exception as e:
-            st.error(f"读取 CSV 失败: {e}")
+        _csv_sales_id = f"{csv_sales.name}_{csv_sales.size}"
+        # Guard: prevent re-processing on st.rerun (same file re-triggers each cycle)
+        if st.session_state.get("_csv_id_sales") == _csv_sales_id:
+            pass
+        else:
+            try:
+                import_df = pd.read_csv(csv_sales)
+                cols = {"日期", "SKU", "数量"}
+                if cols.issubset(set(import_df.columns)):
+                    csv_name = f"销售CSV_{datetime.now().strftime('%m%d_%H%M')}"
+                    imported = []
+                    for _, r in import_df.iterrows():
+                        d = _date_str(_parse_date(r["日期"]))
+                        if not d:
+                            continue
+                        imported.append(ProductionRow(
+                            date=d, sku_key=str(r["SKU"]) if pd.notna(r["SKU"]) else "",
+                            spec=str(r.get("规格", "")).strip() if pd.notna(r.get("规格")) else "",
+                            qty=float(r["数量"]) if pd.notna(r["数量"]) else 0, plan_type="sales",
+                        ))
+                    plans[csv_name] = imported
+                    st.session_state["current_plan_name"] = csv_name
+                    st.session_state["_csv_id_sales"] = _csv_sales_id
+                    _auto_save()
+                    st.session_state["_csv_import_msg"] = f"✅ 导入 {len(imported)} 行销售计划 → 「{csv_name}」"
+                    st.rerun()
+                else:
+                    st.error(f"CSV 缺少列: 日期, SKU, 数量")
+            except Exception as e:
+                st.error(f"读取 CSV 失败: {e}")
+
+    # Show persisted CSV import success message (survives st.rerun)
+    _csv_msg = st.session_state.pop("_csv_import_msg", None)
+    if _csv_msg:
+        st.success(_csv_msg)
 
     sales_df = _sales_editor(page=None, edit_plan=edit_plan, plans=plans, new_name=new_name)
     if reset_sales:
@@ -967,31 +978,35 @@ with tab5:
 
     csv_prod = st.file_uploader("📤 上传 CSV（生产计划，自动保存）", type=["csv"], key="csv_prod")
     if csv_prod:
-        try:
-            import_df = pd.read_csv(csv_prod)
-            cols = {"日期", "生产项", "数量"}
-            if cols.issubset(set(import_df.columns)):
-                csv_name = f"生产CSV_{datetime.now().strftime('%m%d_%H%M')}"
-                imported = []
-                for _, r in import_df.iterrows():
-                    d = _date_str(_parse_date(r["日期"]))
-                    if not d:
-                        continue
-                    imported.append(ProductionRow(
-                        date=d, sku_key=str(r["生产项"]) if pd.notna(r["生产项"]) else "",
-                        spec="", qty=float(r["数量"]) if pd.notna(r["数量"]) else 0,
-                        plan_type="production",
-                    ))
-                plans[csv_name] = imported
-                st.session_state["current_plan_name"] = csv_name
-                st.session_state["_csv_id_prod"] = f"{csv_prod.name}_{csv_prod.size}"
-                _auto_save()
-                st.success(f"✅ 导入 {len(imported)} 行生产计划 → 「{csv_name}」")
-                st.rerun()
-            else:
-                st.error(f"CSV 缺少列: 日期, 生产项, 数量")
-        except Exception as e:
-            st.error(f"读取 CSV 失败: {e}")
+        _csv_prod_id = f"{csv_prod.name}_{csv_prod.size}"
+        if st.session_state.get("_csv_id_prod") == _csv_prod_id:
+            pass
+        else:
+            try:
+                import_df = pd.read_csv(csv_prod)
+                cols = {"日期", "生产项", "数量"}
+                if cols.issubset(set(import_df.columns)):
+                    csv_name = f"生产CSV_{datetime.now().strftime('%m%d_%H%M')}"
+                    imported = []
+                    for _, r in import_df.iterrows():
+                        d = _date_str(_parse_date(r["日期"]))
+                        if not d:
+                            continue
+                        imported.append(ProductionRow(
+                            date=d, sku_key=str(r["生产项"]) if pd.notna(r["生产项"]) else "",
+                            spec="", qty=float(r["数量"]) if pd.notna(r["数量"]) else 0,
+                            plan_type="production",
+                        ))
+                    plans[csv_name] = imported
+                    st.session_state["current_plan_name"] = csv_name
+                    st.session_state["_csv_id_prod"] = _csv_prod_id
+                    _auto_save()
+                    st.session_state["_csv_import_msg"] = f"✅ 导入 {len(imported)} 行生产计划 → 「{csv_name}」"
+                    st.rerun()
+                else:
+                    st.error(f"CSV 缺少列: 日期, 生产项, 数量")
+            except Exception as e:
+                st.error(f"读取 CSV 失败: {e}")
 
     # Prepare editor data: show only production rows from selected plan
     prod_default_rows = []
