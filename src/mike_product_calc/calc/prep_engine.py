@@ -802,24 +802,14 @@ def sales_to_production(
         prod_date = sales_date - timedelta(days=lead_days)
         prod_date_str = prod_date.strftime("%Y-%m-%d")
 
-        # For each recipe row, create a production item
+        # For each recipe row, create a production item (主原料 only = ice cream bases)
         for _, recipe_row in recipe_rows.iterrows():
-            # Collect 主原料
             main_material = str(recipe_row.get("主原料", "")).strip()
             if main_material and main_material.lower() not in ("nan", ""):
                 qty_usage = to_float(recipe_row.get("用量"))
                 if qty_usage is not None and qty_usage > 0:
                     prod_qty = row.qty * qty_usage
                     key = (prod_date_str, main_material, "")
-                    out_rows[key] = out_rows.get(key, 0) + prod_qty
-
-            # Collect 配料
-            ingredient = str(recipe_row.get("配料", "")).strip()
-            if ingredient and ingredient.lower() not in ("nan", ""):
-                qty_usage = to_float(recipe_row.get("用量"))
-                if qty_usage is not None and qty_usage > 0:
-                    prod_qty = row.qty * qty_usage
-                    key = (prod_date_str, ingredient, "")
                     out_rows[key] = out_rows.get(key, 0) + prod_qty
 
     result = sorted(

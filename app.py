@@ -685,17 +685,16 @@ with tab4:
 _profit_df = sku_profit_table(wb.sheets, basis="factory", only_status=None)
 _all_skus = sorted(_profit_df["product_key"].dropna().unique().tolist())
 
-# SKU pool for production plan: 主原料 + 配料 from 产品出品表
+# SKU pool for production plan: 主原料 only (ice cream bases from 产品出品表)
 _out_sheet_names = [k for k in wb.sheets if k.startswith("产品出品表_")]
 _production_skus_list: list[str] = []
 for _sname in _out_sheet_names:
     _df_out = wb.sheets[_sname]
-    for _col in ("主原料", "配料"):
-        if _col in _df_out.columns:
-            for _v in _df_out[_col].dropna().unique():
-                _v_str = str(_v).strip()
-                if _v_str and _v_str.lower() not in ("nan", "") and _v_str not in _production_skus_list:
-                    _production_skus_list.append(_v_str)
+    if "主原料" in _df_out.columns:
+        for _v in _df_out["主原料"].dropna().unique():
+            _v_str = str(_v).strip()
+            if _v_str and _v_str.lower() not in ("nan", "") and _v_str not in _production_skus_list:
+                _production_skus_list.append(_v_str)
 _production_skus = sorted(_production_skus_list)
 
 
@@ -731,91 +730,24 @@ def _init_session():
 
 
 with tab5:
-    st.info("📌 **功能说明**：① 录入销售计划（成品预测）→ ② 一键生成生产计划（配方展开）→ ③ 也可直接录入生产计划。\n"
-             "**使用方法**：在「销售计划」区输入成品预测，保存后切换到「生成生产计划」区一键转换。\n"
-             "**字段含义**：销售计划SKU=产品毛利表成品；生产计划SKU=配方中主原料/配料。")
+    st.info("📌 **功能说明**：① 录入销售计划（成品预测）→ ② 一键生成生产计划（配方展开）。\n"
+             "**使用方法**：输入成品销售预测 → 保存 → 设提前天数 → 生成生产计划。\n"
+             "**销售SKU**=产品毛利表成品；**生产项**=配方中的冰激淋基底。")
     _init_session()
     plans: dict = st.session_state["production_plans"]
-    current = st.session_state.get("current_plan_name")
-    saved_names = list(plans.keys())
-
-    # ── Shared: Scenario management ──────────────────────────────────
-    st.subheader("场景管理")
-    col_mg1, col_mg2, col_mg3 = st.columns([2, 1, 1])
-    with col_mg1:
-        new_name = st.text_input("新场景名", placeholder="输入名称后按 Enter", key="new_plan_name_input")
-    with col_mg2:
-        st.write(""); st.write("")
-        create_clicked = st.button("➕ 新建空白场景", use_container_width=True, type="secondary")
-    with col_mg3:
-        st.write(""); st.write("")
-        if current and st.button("🗑 删除当前", use_container_width=True):
-            plans.pop(current, None)
-            st.session_state["current_plan_name"] = None
-            st.rerun()
-
-    if create_clicked and new_name:
-        if new_name not in plans:
-            plans[new_name] = []
-        st.session_state["current_plan_name"] = new_name
-        st.rerun()
-
-    # ── Shared: Plan selection & copy ────────────────────────────────
-    col_sel1, col_sel2 = st.columns([2, 1])
-    with col_sel1:
-        all_plan_names = list(plans.keys())
-        _cur = st.session_state.get("current_plan_name")
-        _prev_widget = st.session_state.get("edit_plan_sel")
-        if _cur and _cur in all_plan_names and _cur != _prev_widget:
-            st.session_state["edit_plan_sel"] = _cur
-        edit_plan = st.selectbox(
-            "✏️ 选择要编辑的场景",
-            options=["(新建空计划)"] + all_plan_names,
-            index=(all_plan_names.index(_cur) + 1) if _cur and _cur in all_plan_names else 0,
-            key="edit_plan_sel",
-        )
-        if edit_plan != "(新建空计划)":
-            st.session_state["current_plan_name"] = edit_plan
-    with col_sel2:
-        copy_source = st.selectbox("📋 复制现有场景", options=[""] + saved_names, key="copy_source_sel")
-        if copy_source and st.button("复制 → 新场景", key="do_copy_btn"):
-            src_rows = plans.get(copy_source, [])
-            default_name = f"{copy_source}_副本"
-            counter = 1
-            while default_name in plans:
-                counter += 1
-                default_name = f"{copy_source}_副本{counter}"
-            plans[default_name] = [ProductionRow(
-                date=r.date, sku_key=r.sku_key, spec=r.spec,
-                qty=r.qty, plan_type=r.plan_type,
-            ) for r in src_rows]
-            st.session_state["current_plan_name"] = default_name
-            st.success(f"已复制为「{default_name}」")
-            st.rerun()
+    SALES_KEY = "销售计划_当前"
+    PROD_KEY = "生产计划_当前"
 
     # ════════════════════════════════════════════════════════════════════
     # Section A: 销售计划录入
     # ════════════════════════════════════════════════════════════════════
-    st.divider()
     st.subheader("📋 销售计划录入")
-    st.caption("录入成品销售预测（SKU 来自产品毛利表）")
+    st.caption("录入成品销售预测 — SKU 来自产品毛利表")
     _saved_sales_msg = st.session_state.pop("_msg_sales_saved", None)
     if _saved_sales_msg:
         st.success(_saved_sales_msg)
 
-    def _sales_editor(page, edit_plan, plans, new_name):
-        """Shared data editor for sales plan rows."""
-        default_rows = []
-        if edit_plan != "(新建空计划)" and edit_plan in plans:
-            existing_rows = plans[edit_plan]
-            default_rows = [{"日期": r.date, "SKU": r.sku_key, "规格": r.spec, "数量": r.qty}
-                            for r in existing_rows if r.plan_type == "sales"]
-        min_r = max(len(default_rows), 5)
-        while len(default_rows) < min_r:
-            default_rows.append({"日期": "", "SKU": "", "规格": "", "数量": 0})
-        return pd.DataFrame(default_rows)
-
-    col_s1, col_s2, col_s3 = st.columns([1, 1, 2])
+    col_s1, col_s2 = st.columns([1, 2])
     with col_s1:
         st.download_button(
             "📥 模板(销售)",
@@ -823,52 +755,50 @@ with tab5:
             file_name="sales_plan_template.csv", mime="text/csv", key="sales_tmpl",
         )
     with col_s2:
-        reset_sales = st.button("🔄 重置", key="reset_sales", use_container_width=True)
+        reset_sales = st.button("🔄 重置销售计划", use_container_width=True, key="reset_sales")
 
-    csv_sales = st.file_uploader("📤 上传 CSV（销售计划，自动保存）", type=["csv"], key="csv_sales")
+    # CSV upload: sales
+    csv_sales = st.file_uploader("📤 上传 CSV（销售计划）", type=["csv"], key="csv_sales")
     if csv_sales:
-        _csv_sales_id = f"{csv_sales.name}_{csv_sales.size}"
-        # Guard: prevent re-processing on st.rerun (same file re-triggers each cycle)
-        if st.session_state.get("_csv_id_sales") == _csv_sales_id:
-            pass
-        else:
+        _sid = f"{csv_sales.name}_{csv_sales.size}"
+        if st.session_state.get("_csv_sales_id") != _sid:
             try:
                 import_df = pd.read_csv(csv_sales)
-                cols = {"日期", "SKU", "数量"}
-                if cols.issubset(set(import_df.columns)):
-                    csv_name = f"销售CSV_{datetime.now().strftime('%m%d_%H%M')}"
+                if {"日期", "SKU", "数量"}.issubset(set(import_df.columns)):
                     imported = []
                     for _, r in import_df.iterrows():
                         d = _date_str(_parse_date(r["日期"]))
-                        if not d:
-                            continue
+                        if not d: continue
                         imported.append(ProductionRow(
                             date=d, sku_key=str(r["SKU"]) if pd.notna(r["SKU"]) else "",
                             spec=str(r.get("规格", "")).strip() if pd.notna(r.get("规格")) else "",
                             qty=float(r["数量"]) if pd.notna(r["数量"]) else 0, plan_type="sales",
                         ))
-                    plans[csv_name] = imported
-                    st.session_state["current_plan_name"] = csv_name
-                    st.session_state["_csv_id_sales"] = _csv_sales_id
+                    plans[SALES_KEY] = imported
+                    st.session_state["_csv_sales_id"] = _sid
+                    st.session_state["_csv_import_msg"] = f"✅ 导入 {len(imported)} 行销售计划"
                     _auto_save()
-                    st.session_state["_csv_import_msg"] = f"✅ 导入 {len(imported)} 行销售计划 → 「{csv_name}」"
                     st.rerun()
                 else:
-                    st.error(f"CSV 缺少列: 日期, SKU, 数量")
+                    st.error("CSV 需要列: 日期, SKU, 数量")
             except Exception as e:
                 st.error(f"读取 CSV 失败: {e}")
 
-    # Show persisted CSV import success message (survives st.rerun)
     _csv_msg = st.session_state.pop("_csv_import_msg", None)
     if _csv_msg:
         st.success(_csv_msg)
 
-    sales_df = _sales_editor(page=None, edit_plan=edit_plan, plans=plans, new_name=new_name)
+    # Sales editor — always reads/writes SALES_KEY
+    sales_rows = plans.get(SALES_KEY, [])
+    sales_default = [{"日期": r.date, "SKU": r.sku_key, "规格": r.spec, "数量": r.qty}
+                     for r in sales_rows if r.plan_type == "sales"]
     if reset_sales:
-        sales_df = pd.DataFrame(columns=["日期", "SKU", "规格", "数量"])
+        sales_default = []
+    while len(sales_default) < 5:
+        sales_default.append({"日期": "", "SKU": "", "规格": "", "数量": 0})
 
     edited_sales = st.data_editor(
-        sales_df, num_rows="dynamic", use_container_width=True,
+        pd.DataFrame(sales_default), num_rows="dynamic", use_container_width=True,
         height=300,
         column_config={
             "日期": st.column_config.TextColumn("日期", required=True),
@@ -879,94 +809,67 @@ with tab5:
         key="sales_editor",
     )
 
-    if st.button("✅ 保存销售计划", type="primary", key="save_sales"):
-        save_name = edit_plan if edit_plan != "(新建空计划)" else (new_name or f"销售计划_{len(plans)+1}")
+    if st.button("✅ 保存销售计划", type="primary", key="save_sales", use_container_width=True):
         rows = []
         for _, row in edited_sales.iterrows():
             d = _date_str(_parse_date(row["日期"]))
-            if not d:
-                continue
+            if not d: continue
             rows.append(ProductionRow(
                 date=d, sku_key=str(row["SKU"]) if pd.notna(row["SKU"]) else "",
                 spec=str(row["规格"]).strip() if pd.notna(row.get("规格")) else "",
                 qty=float(row["数量"]) if pd.notna(row["数量"]) else 0, plan_type="sales",
             ))
-        plans[save_name] = rows
-        st.session_state["current_plan_name"] = save_name
+        plans[SALES_KEY] = rows
         _auto_save()
-        st.session_state["_msg_sales_saved"] = f"✅ 已保存销售计划：{save_name}（{len(rows)} 行）"
+        st.session_state["_msg_sales_saved"] = f"✅ 已保存销售计划（{len(rows)} 行）"
         st.rerun()
 
     # ════════════════════════════════════════════════════════════════════
-    # Section B: 一键生成生产计划
+    # Section B: 生成生产计划
     # ════════════════════════════════════════════════════════════════════
     st.divider()
     st.subheader("⚙️ 生成生产计划")
-    st.caption("选择已保存的销售计划场景，系统根据配方（产品出品表）自动展开为生产计划")
+    st.caption("根据当前销售计划，按配方展开为生产项（仅冰激淋基底，不含包材）")
 
-    col_g1, col_g2, col_g3 = st.columns([3, 1, 2])
+    col_g1, col_g2, col_g3 = st.columns([1, 1, 2])
+    lead_days = st.number_input("备货提前天数", min_value=0, max_value=30, value=1, key="lead_days")
+    gen_clicked = st.button("🚀 从销售计划生成生产计划", type="primary", use_container_width=True, key="gen_btn")
 
-    with col_g1:
-        # Find sales-type scenarios for the dropdown
-        sales_scenarios = [n for n in saved_names if any(
-            r.plan_type == "sales" for r in plans.get(n, [])
-        )]
-        gen_source = st.selectbox("来源销售计划", options=[""] + sales_scenarios, key="gen_source")
-
-    with col_g2:
-        lead_days = st.number_input("备货提前(天)", min_value=0, max_value=30, value=1, key="lead_days")
-
-    with col_g3:
-        st.write("")
-        st.write("")
-        gen_clicked = st.button("🚀 生成生产计划", type="primary", use_container_width=True, key="gen_btn")
-
-    if gen_clicked and gen_source:
-        sales_rows = plans.get(gen_source, [])
-        if sales_rows:
+    if gen_clicked:
+        sales_rows = plans.get(SALES_KEY, [])
+        if not sales_rows:
+            st.warning("请先录入并保存销售计划")
+        else:
             with st.spinner("根据配方展开生产计划…"):
                 prod_rows = sales_to_production(sales_rows, wb.sheets, lead_days=lead_days)
             if prod_rows:
-                gen_name = f"{gen_source}_生产排期"
-                counter = 1
-                while gen_name in plans:
-                    counter += 1
-                    gen_name = f"{gen_source}_生产排期{counter}"
-                plans[gen_name] = prod_rows
-                st.session_state["current_plan_name"] = gen_name
+                plans[PROD_KEY] = prod_rows
                 _auto_save()
-
-                # Preview
                 preview_gen = pd.DataFrame([
                     {"日期": r.date, "生产项": r.sku_key, "数量": r.qty}
                     for r in prod_rows
                 ])
-                st.success(f"✅ 已生成生产计划：{gen_name}（{len(prod_rows)} 行）")
-                with st.expander("📊 预览生成结果", expanded=True):
+                st.success(f"✅ 已生成生产计划（{len(prod_rows)} 行）")
+                with st.expander("📊 预览", expanded=True):
                     st.dataframe(preview_gen, use_container_width=True, height=300)
-                    # Summary
-                    total_items = len(prod_rows)
-                    total_prod_qty = sum(r.qty for r in prod_rows)
-                    unique_dates = len(set(r.date for r in prod_rows))
                     col_m1, col_m2, col_m3 = st.columns(3)
-                    col_m1.metric("生产项数", total_items)
-                    col_m2.metric("总生产量", f"{total_prod_qty:.0f}")
-                    col_m3.metric("涉及日期", unique_dates)
+                    col_m1.metric("生产项数", len(prod_rows))
+                    col_m2.metric("总生产量", f"{sum(r.qty for r in prod_rows):.0f}")
+                    col_m3.metric("涉及日期", len(set(r.date for r in prod_rows)))
             else:
-                st.warning("所选销售计划无法展开为生产计划（可能缺少配方数据）")
-        st.rerun()
+                st.warning("无法展开为生产计划（销售 SKU 缺少配方数据）")
 
     # ════════════════════════════════════════════════════════════════════
-    # Section C: 生产计划直接录入
+    # Section C: 生产计划编辑
     # ════════════════════════════════════════════════════════════════════
     st.divider()
-    st.subheader("🏭 生产计划直接录入")
-    st.caption("直接录入需生产的物料（配方中主原料/配料），也可在此调整自动生成的计划")
+    st.subheader("🏭 生产计划编辑")
+    st.caption("查看/调整已有生产计划，或直接录入（生产项=配方冰激淋基底）")
     _saved_prod_msg = st.session_state.pop("_msg_prod_saved", None)
     if _saved_prod_msg:
         st.success(_saved_prod_msg)
 
-    col_p1, col_p2 = st.columns([1, 1])
+    col_p1, col_p2 = st.columns([1, 2])
     with col_p1:
         st.download_button(
             "📥 模板(生产)",
@@ -974,55 +877,45 @@ with tab5:
             file_name="prod_plan_template.csv", mime="text/csv", key="prod_tmpl",
         )
     with col_p2:
-        reset_prod = st.button("🔄 重置", key="reset_prod", use_container_width=True)
+        reset_prod = st.button("🔄 重置生产计划", use_container_width=True, key="reset_prod")
 
-    csv_prod = st.file_uploader("📤 上传 CSV（生产计划，自动保存）", type=["csv"], key="csv_prod")
+    csv_prod = st.file_uploader("📤 上传 CSV（生产计划）", type=["csv"], key="csv_prod")
     if csv_prod:
-        _csv_prod_id = f"{csv_prod.name}_{csv_prod.size}"
-        if st.session_state.get("_csv_id_prod") == _csv_prod_id:
-            pass
-        else:
+        _pid = f"{csv_prod.name}_{csv_prod.size}"
+        if st.session_state.get("_csv_prod_id") != _pid:
             try:
                 import_df = pd.read_csv(csv_prod)
-                cols = {"日期", "生产项", "数量"}
-                if cols.issubset(set(import_df.columns)):
-                    csv_name = f"生产CSV_{datetime.now().strftime('%m%d_%H%M')}"
+                if {"日期", "生产项", "数量"}.issubset(set(import_df.columns)):
                     imported = []
                     for _, r in import_df.iterrows():
                         d = _date_str(_parse_date(r["日期"]))
-                        if not d:
-                            continue
+                        if not d: continue
                         imported.append(ProductionRow(
                             date=d, sku_key=str(r["生产项"]) if pd.notna(r["生产项"]) else "",
                             spec="", qty=float(r["数量"]) if pd.notna(r["数量"]) else 0,
                             plan_type="production",
                         ))
-                    plans[csv_name] = imported
-                    st.session_state["current_plan_name"] = csv_name
-                    st.session_state["_csv_id_prod"] = _csv_prod_id
+                    plans[PROD_KEY] = imported
+                    st.session_state["_csv_prod_id"] = _pid
+                    st.session_state["_csv_import_msg"] = f"✅ 导入 {len(imported)} 行生产计划"
                     _auto_save()
-                    st.session_state["_csv_import_msg"] = f"✅ 导入 {len(imported)} 行生产计划 → 「{csv_name}」"
                     st.rerun()
                 else:
-                    st.error(f"CSV 缺少列: 日期, 生产项, 数量")
+                    st.error("CSV 需要列: 日期, 生产项, 数量")
             except Exception as e:
                 st.error(f"读取 CSV 失败: {e}")
 
-    # Prepare editor data: show only production rows from selected plan
-    prod_default_rows = []
-    if edit_plan != "(新建空计划)" and edit_plan in plans:
-        existing = plans[edit_plan]
-        prod_default_rows = [{"日期": r.date, "生产项": r.sku_key, "数量": r.qty}
-                             for r in existing if r.plan_type == "production"]
+    # Production editor — reads/writes PROD_KEY
+    prod_rows = plans.get(PROD_KEY, [])
+    prod_default = [{"日期": r.date, "生产项": r.sku_key, "数量": r.qty}
+                    for r in prod_rows if r.plan_type == "production"]
     if reset_prod:
-        prod_default_rows = []
-    min_rp = max(len(prod_default_rows), 5)
-    while len(prod_default_rows) < min_rp:
-        prod_default_rows.append({"日期": "", "生产项": "", "数量": 0})
+        prod_default = []
+    while len(prod_default) < 5:
+        prod_default.append({"日期": "", "生产项": "", "数量": 0})
 
-    prod_editor_df = pd.DataFrame(prod_default_rows)
     edited_prod = st.data_editor(
-        prod_editor_df, num_rows="dynamic", use_container_width=True,
+        pd.DataFrame(prod_default), num_rows="dynamic", use_container_width=True,
         height=300,
         column_config={
             "日期": st.column_config.TextColumn("日期", required=True),
@@ -1032,55 +925,37 @@ with tab5:
         key="prod_editor",
     )
 
-    if st.button("✅ 保存生产计划", type="primary", key="save_prod"):
-        save_name = edit_plan if edit_plan != "(新建空计划)" else (new_name or f"生产计划_{len(plans)+1}")
+    if st.button("✅ 保存生产计划", type="primary", key="save_prod", use_container_width=True):
         rows = []
         for _, row in edited_prod.iterrows():
             d = _date_str(_parse_date(row["日期"]))
-            if not d:
-                continue
+            if not d: continue
             rows.append(ProductionRow(
                 date=d, sku_key=str(row["生产项"]) if pd.notna(row["生产项"]) else "",
                 spec="", qty=float(row["数量"]) if pd.notna(row["数量"]) else 0,
                 plan_type="production",
             ))
-        # Merge with existing sales rows if current plan has them
-        if save_name in plans:
-            existing_sales = [r for r in plans[save_name] if r.plan_type == "sales"]
-            rows = existing_sales + rows
-        plans[save_name] = rows
-        st.session_state["current_plan_name"] = save_name
+        # Merge with existing sales plan
+        existing_sales = [r for r in plans.get(SALES_KEY, []) if r.plan_type == "sales"]
+        plans[PROD_KEY] = existing_sales + rows
         _auto_save()
-        st.session_state["_msg_prod_saved"] = f"✅ 已保存生产计划：{save_name}（{len(rows)} 行）"
+        st.session_state["_msg_prod_saved"] = f"✅ 已保存生产计划（{len(rows)} 行）"
         st.rerun()
 
     # ════════════════════════════════════════════════════════════════════
-    # Preview saved plans
+    # Quick overview
     # ════════════════════════════════════════════════════════════════════
-    if plans:
-        st.divider()
-        st.subheader("已保存场景概览")
-        preview_opts = list(plans.keys())
-        preview_plan = st.selectbox("查看场景", options=preview_opts, key="preview_sel")
-        if preview_plan:
-            rows = plans[preview_plan]
-            if rows:
-                df_rows = []
-                for r in rows:
-                    label = "销售" if r.plan_type == "sales" else "生产"
-                    df_rows.append({"日期": r.date, "SKU/生产项": r.sku_key, "数量": r.qty, "类型": label})
-                preview_df = pd.DataFrame(df_rows)
-                sales_count = sum(1 for r in rows if r.plan_type == "sales")
-                prod_count = sum(1 for r in rows if r.plan_type == "production")
-                total_qty = sum(r.qty for r in rows)
-                col_p1, col_p2, col_p3, col_p4 = st.columns(4)
-                col_p1.metric("总行数", len(rows))
-                col_p2.metric("销售计划行", sales_count)
-                col_p3.metric("生产计划行", prod_count)
-                col_p4.metric("总数量", f"{total_qty:.0f}")
-                st.dataframe(preview_df, use_container_width=True, height=300)
-            else:
-                st.info("该场景暂无数据")
+    st.divider()
+    st.subheader("当前计划概览")
+    col_o1, col_o2 = st.columns(2)
+    with col_o1:
+        sales_rows = plans.get(SALES_KEY, [])
+        sales_qty = sum(r.qty for r in sales_rows) if sales_rows else 0
+        col_o1.metric("销售计划行数", len(sales_rows) if sales_rows else 0, help="当前销售计划总行数")
+    with col_o2:
+        prod_rows = plans.get(PROD_KEY, [])
+        prod_qty = sum(r.qty for r in prod_rows) if prod_rows else 0
+        col_o2.metric("生产计划行数", len(prod_rows) if prod_rows else 0, help="当前生产计划总行数")
 
 
 # ── Tab6: 备料计划 ─────────────────────────────────────────────────────
