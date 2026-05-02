@@ -758,15 +758,20 @@ with tab5:
         reset_sales = st.button("🔄 重置销售计划", use_container_width=True, key="reset_sales")
 
     # CSV upload: sales
-    csv_sales = st.file_uploader("📤 上传销售计划（CSV / Excel）", type=["csv", "xlsx"], key="csv_sales")
+    csv_sales = st.file_uploader("📤 上传销售计划（CSV / Excel）", type=None, key="csv_sales")
     if csv_sales:
         _sid = f"{csv_sales.name}_{csv_sales.size}"
         if st.session_state.get("_csv_sales_id") != _sid:
             try:
-                if csv_sales.name.lower().endswith(".xlsx"):
+                fname = csv_sales.name.lower()
+                if fname.endswith(".xlsx"):
                     import_df = pd.read_excel(csv_sales, dtype=object)
-                else:
+                elif fname.endswith(".csv"):
                     import_df = pd.read_csv(csv_sales, encoding="utf-8-sig")
+                else:
+                    st.error(f"不支持的文件格式，请上传 .csv 或 .xlsx 文件")
+                    st.session_state["_csv_sales_id"] = _sid
+                    st.rerun()
                 if {"日期", "SKU", "数量"}.issubset(set(import_df.columns)):
                     imported = []
                     for _, r in import_df.iterrows():
