@@ -766,7 +766,7 @@ with tab5:
                 if csv_sales.name.lower().endswith(".xlsx"):
                     import_df = pd.read_excel(csv_sales, dtype=object)
                 else:
-                    import_df = pd.read_csv(csv_sales)
+                    import_df = pd.read_csv(csv_sales, encoding="utf-8-sig")
                 if {"日期", "SKU", "数量"}.issubset(set(import_df.columns)):
                     imported = []
                     for _, r in import_df.iterrows():
