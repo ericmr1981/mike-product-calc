@@ -824,6 +824,8 @@ def sales_to_production(
         match_mask = sheet_keys == target_key
         if not match_mask.any():
             match_mask = df["品名"].fillna("").astype(str).str.strip() == product_name
+            if spec and "规格" in df.columns:
+                match_mask &= df["规格"].fillna("").astype(str).str.strip() == spec
 
         output_rows = df[match_mask]
         if output_rows.empty:

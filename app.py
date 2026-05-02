@@ -425,7 +425,7 @@ if "_mpc_state_synced" not in st.session_state:
     st.session_state["_mpc_state_synced"] = True
 
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(["概览/校验", "SKU 毛利分析（双口径）", "Sheet 浏览", "原料价格模拟器", "生产计划录入", "备料计划", "采购建议", "产品组合评估", "多场景对比", "选品优化器", "产能需求估算"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(["概览/校验", "SKU 毛利分析（双口径）", "Sheet 浏览", "原料价格模拟器", "产销计划", "采购建议", "产品组合评估", "多场景对比", "选品优化器"])
 
 with tab1:
     st.info("📌 **功能说明**：上传 Excel 文件后，系统自动解析并校验所有 sheet。\n"
@@ -679,19 +679,27 @@ with tab4:
             adj_list = [f"{a.item} → {a.new_unit_price}" for a in (sc.adjustments if sc else [])]
             st.markdown(f"**{nm}**（{len(adj_list)} 项调价）：{', '.join(adj_list) if adj_list else '（无调整）'}")
 
-# ── Tab5: 生产计划录入 ────────────────────────────────────────────────
+# ── Tab5: 产销计划 ────────────────────────────────────────────────────
 
 # Build SKU list from workbook for dropdown
 _profit_df = sku_profit_table(wb.sheets, basis="factory", only_status=None)
 _all_skus = sorted(_profit_df["product_key"].dropna().unique().tolist())
 
-# Production SKU pool: 产品配方表 + 半成品配方表 品名 (ice cream bases)
+# Production SKU pool: 配方表品名 + 配方表配料 + 出品表配料
 _production_skus_list: list[str] = []
 for _sname in wb.sheets:
     if "产品配方表" in _sname or "半成品配方表" in _sname:
         _df = wb.sheets[_sname]
-        if "品名" in _df.columns:
-            for _v in _df["品名"].dropna().unique():
+        for _col in ("品名", "配料"):
+            if _col in _df.columns:
+                for _v in _df[_col].dropna().unique():
+                    _v_str = str(_v).strip()
+                    if _v_str and _v_str not in ("nan", "") and _v_str not in _production_skus_list:
+                        _production_skus_list.append(_v_str)
+    elif "产品出品表" in _sname:
+        _df = wb.sheets[_sname]
+        if "配料" in _df.columns:
+            for _v in _df["配料"].dropna().unique():
                 _v_str = str(_v).strip()
                 if _v_str and _v_str not in ("nan", "") and _v_str not in _production_skus_list:
                     _production_skus_list.append(_v_str)
@@ -730,8 +738,8 @@ def _init_session():
 
 
 with tab5:
-    st.info("📌 **功能说明**：① 录入销售计划（成品预测）→ ② 一键生成生产计划（配方展开）。\n"
-             "**使用方法**：输入成品销售预测 → 保存 → 设提前天数 → 生成生产计划。\n"
+    st.info("📌 **功能说明**：① 录入销售计划 → ② 生成生产计划 → ③ 展开 BOM 计算原料需求 → ④ 成本核算。\n"
+             "**使用方法**：从上至下按步骤操作。\n"
              "**销售SKU**=产品毛利表成品；**生产项**=配方中的冰激淋基底。")
     _init_session()
     plans: dict = st.session_state["production_plans"]
@@ -739,9 +747,9 @@ with tab5:
     PROD_KEY = "生产计划_当前"
 
     # ════════════════════════════════════════════════════════════════════
-    # Section A: 销售计划录入
+    # Step 1: 销售计划录入
     # ════════════════════════════════════════════════════════════════════
-    st.subheader("📋 销售计划录入")
+    st.subheader("📋 Step 1: 销售计划录入")
     st.caption("录入成品销售预测 — SKU 来自产品毛利表")
     _saved_sales_msg = st.session_state.pop("_msg_sales_saved", None)
     if _saved_sales_msg:
@@ -751,11 +759,11 @@ with tab5:
     with col_s1:
         st.download_button(
             "📥 模板(销售)",
-            data=pd.DataFrame([{"日期": "2026-04-24", "SKU": "Gelato|榛子巧克力布朗尼|小杯", "规格": "小杯", "数量": 36}]).to_csv(index=False).encode("utf-8-sig"),
+            data=pd.DataFrame([{"日期": "2026-04-24", "SKU": "Gelato|榛子巧克力布朗尼|小杯", "数量": 36}]).to_csv(index=False).encode("utf-8-sig"),
             file_name="sales_plan_template.csv", mime="text/csv", key="sales_tmpl",
         )
     with col_s2:
-        reset_sales = st.button("🔄 重置销售计划", use_container_width=True, key="reset_sales")
+        reset_both = st.button("🔄 重置销售计划和生产计划", use_container_width=True, key="reset_both")
 
     # CSV upload: sales
     csv_sales = st.file_uploader("📤 上传销售计划（CSV / Excel）", type=[".csv", ".xlsx"], key="csv_sales")
@@ -779,7 +787,7 @@ with tab5:
                         if not d: continue
                         imported.append(ProductionRow(
                             date=d, sku_key=str(r["SKU"]) if pd.notna(r["SKU"]) else "",
-                            spec=str(r.get("规格", "")).strip() if pd.notna(r.get("规格")) else "",
+                            spec="",
                             qty=float(r["数量"]) if pd.notna(r["数量"]) else 0, plan_type="sales",
                         ))
                     plans[SALES_KEY] = imported
@@ -798,12 +806,13 @@ with tab5:
 
     # Sales editor — always reads/writes SALES_KEY
     sales_rows = plans.get(SALES_KEY, [])
-    sales_default = [{"日期": r.date, "SKU": r.sku_key, "规格": r.spec, "数量": r.qty}
+    sales_default = [{"日期": r.date, "SKU": r.sku_key, "数量": r.qty}
                      for r in sales_rows if r.plan_type == "sales"]
-    if reset_sales:
+    if reset_both:
         sales_default = []
+        plans.pop(PROD_KEY, None)
     while len(sales_default) < 5:
-        sales_default.append({"日期": "", "SKU": "", "规格": "", "数量": 0})
+        sales_default.append({"日期": "", "SKU": "", "数量": 0})
 
     edited_sales = st.data_editor(
         pd.DataFrame(sales_default), num_rows="dynamic", use_container_width=True,
@@ -811,7 +820,6 @@ with tab5:
         column_config={
             "日期": st.column_config.TextColumn("日期", required=True),
             "SKU": st.column_config.SelectboxColumn("SKU", options=_all_skus),
-            "规格": st.column_config.TextColumn("规格"),
             "数量": st.column_config.NumberColumn("数量", min_value=0, format="%d"),
         },
         key="sales_editor",
@@ -824,7 +832,7 @@ with tab5:
             if not d: continue
             rows.append(ProductionRow(
                 date=d, sku_key=str(row["SKU"]) if pd.notna(row["SKU"]) else "",
-                spec=str(row["规格"]).strip() if pd.notna(row.get("规格")) else "",
+                spec="",
                 qty=float(row["数量"]) if pd.notna(row["数量"]) else 0, plan_type="sales",
             ))
         plans[SALES_KEY] = rows
@@ -833,10 +841,10 @@ with tab5:
         st.rerun()
 
     # ════════════════════════════════════════════════════════════════════
-    # Section B: 生产计划
+    # Step 2: 生产计划
     # ════════════════════════════════════════════════════════════════════
     st.divider()
-    st.subheader("🏭 生产计划")
+    st.subheader("🏭 Step 2: 生产计划")
     st.caption("从销售计划生成后可直接编辑，也可手动录入调整")
 
     col_g1, col_g2, col_g3 = st.columns([1, 1, 2])
@@ -852,6 +860,11 @@ with tab5:
         if not sales_rows:
             st.warning("请先录入并保存销售计划")
         else:
+            # Warn if any sales rows lack spec (neither in SKU nor spec field)
+            no_spec_rows = [r for r in sales_rows if len(r.sku_key.split("|")) < 3 and not r.spec]
+            if no_spec_rows:
+                st.warning(f"⚠️ {len(no_spec_rows)} 行销售计划缺少规格信息（SKU 中无「|规格」且「规格」列为空），"
+                           f"可能匹配多个出品规格导致数量偏高。建议补充规格后重新生成。")
             with st.spinner("根据配方展开生产计划…"):
                 prod_rows = sales_to_production(sales_rows, wb.sheets, lead_days=lead_days)
             if prod_rows:
@@ -886,9 +899,7 @@ with tab5:
         key=f"prod_editor_v{st.session_state['prod_gen_version']}",
     )
 
-    col_save_prod, _ = st.columns([1, 4])
-    with col_save_prod:
-        if st.button("💾 保存生产计划", type="primary", use_container_width=True, key="save_prod"):
+    if st.button("💾 保存生产计划", type="primary", use_container_width=True, key="save_prod"):
             rows = []
             for _, row in edited_prod.iterrows():
                 d = _date_str(_parse_date(row["日期"]))
@@ -904,262 +915,205 @@ with tab5:
             st.rerun()
 
     # ════════════════════════════════════════════════════════════════════
-    # Quick overview
+    # ════════════════════════════════════════════════════════════════════
+    # Step 3: BOM 展开 — 原料需求计算
     # ════════════════════════════════════════════════════════════════════
     st.divider()
-    st.subheader("当前计划概览")
-    col_o1, col_o2 = st.columns(2)
-    with col_o1:
-        sales_rows = plans.get(SALES_KEY, [])
-        sales_qty = sum(r.qty for r in sales_rows) if sales_rows else 0
-        col_o1.metric("销售计划行数", len(sales_rows) if sales_rows else 0, help="当前销售计划总行数")
-    with col_o2:
-        prod_rows = plans.get(PROD_KEY, [])
-        prod_qty = sum(r.qty for r in prod_rows) if prod_rows else 0
-        col_o2.metric("生产计划行数", len(prod_rows) if prod_rows else 0, help="当前生产计划总行数")
+    st.subheader("🔍 Step 3: BOM 展开 — 原料需求计算")
+    st.caption("三级展开：SKU → 主原料/配料 → 原料；支持损耗率、最小采购单位、批次取整、提前期。")
 
+    col_bom1, col_bom2, col_bom3, col_bom4 = st.columns([2, 1, 1, 2])
+    with col_bom1:
+        bom_lead_days = st.number_input(
+            "提前期（天）", min_value=0, max_value=90, value=3, key="bom_lead_days"
+        )
+    with col_bom2:
+        bom_loss_rate = st.number_input(
+            "损耗率（%）", min_value=0, max_value=100, value=0, key="bom_loss_rate"
+        ) / 100.0
+    with col_bom3:
+        bom_basis_opts = ["store", "factory"]
+        bom_basis_label = {"store": "门店(加价后单价)", "factory": "出厂(加价前单价)"}
+        bom_basis = st.selectbox(
+            "单价口径", options=bom_basis_opts,
+            format_func=lambda x: bom_basis_label[x], key="bom_basis",
+        )
+    with col_bom4:
+        st.write("")
+        st.write("")
+        run_expand = st.button("🔍 展开 BOM", type="primary", use_container_width=True, key="run_bom")
 
-# ── Tab6: 备料计划 ─────────────────────────────────────────────────────
+    col_bom_date1, col_bom_date2 = st.columns([1, 1])
+    with col_bom_date1:
+        bom_start = st.date_input("开始日期", value=None, key="bom_start")
+    with col_bom_date2:
+        bom_end = st.date_input("结束日期", value=None, key="bom_end")
 
-import datetime as dt
+    # ── Expand logic ──
+    bom_result = st.session_state.get("_bom_result")
+    bom_elapsed = st.session_state.get("_bom_elapsed")
+
+    if run_expand:
+        bom_rows: List[ProductionRow] = plans.get(PROD_KEY, [])
+        if not bom_rows:
+            st.info("请先完成 Step 2 生成生产计划。")
+        else:
+            start_dt = bom_start
+            end_dt = bom_end
+            filtered = []
+            for r in bom_rows:
+                rdate = _parse_date(r.date)
+                if rdate is None:
+                    filtered.append(r)
+                    continue
+                if start_dt and rdate < start_dt:
+                    continue
+                if end_dt and rdate > end_dt:
+                    continue
+                filtered.append(r)
+
+            if not filtered:
+                st.info("日期范围内无数据。")
+            else:
+                sku_qty: Dict[str, float] = {}
+                for r in filtered:
+                    k = str(r.sku_key).strip()
+                    if k:
+                        sku_qty[k] = sku_qty.get(k, 0.0) + float(r.qty)
+
+                target_date: Optional[date] = end_dt
+                with st.spinner("BOM 展开中…"):
+                    t0 = datetime.now()
+                    result = bom_expand_multi(
+                        wb.sheets, sku_qty,
+                        order_date=target_date, basis=bom_basis,
+                        default_lead_days=bom_lead_days,
+                        default_loss_rate=bom_loss_rate,
+                        default_safety_stock=0.0,
+                    )
+                    elapsed = (datetime.now() - t0).total_seconds()
+                st.success(f"展开完成，耗时 {elapsed:.2f}s")
+                st.session_state["_bom_result"] = result
+                st.session_state["_bom_elapsed"] = elapsed
+                bom_result = result
+                bom_elapsed = elapsed
+
+    if bom_result is not None and not bom_result.empty:
+        inner_tab_a, inner_tab_b, inner_tab_c = st.tabs(
+            ["📦 原料需求汇总", "⚠️ 缺口预警", "📊 统计概览"]
+        )
+
+        with inner_tab_a:
+            st.markdown("#### 原料需求汇总表")
+            display_cols = [
+                "material", "level", "purchase_unit", "lead_days",
+                "total_plan_qty", "total_gross_qty", "total_purchase_qty",
+                "unit_price", "total_cost", "is_gap", "gap_reason",
+                "is_semi_finished",
+            ]
+            display = bom_result[display_cols].copy()
+            display["is_gap"] = display["is_gap"].map(
+                lambda x: "⚠️ 缺口" if x else "✅ 正常"
+            )
+            st.dataframe(
+                display, use_container_width=True, height=500,
+                column_config={
+                    "material": st.column_config.TextColumn("原料名称"),
+                    "level": st.column_config.TextColumn("层级"),
+                    "purchase_unit": st.column_config.TextColumn("采购单位"),
+                    "lead_days": st.column_config.NumberColumn("提前期(天)"),
+                    "total_plan_qty": st.column_config.NumberColumn("计划用量", format="%.2f"),
+                    "total_gross_qty": st.column_config.NumberColumn("总需求(含损耗)", format="%.2f"),
+                    "total_purchase_qty": st.column_config.NumberColumn("建议采购量", format="%.2f"),
+                    "unit_price": st.column_config.NumberColumn("单价(元)", format="%.4f"),
+                    "total_cost": st.column_config.NumberColumn("采购成本(元)", format="%.2f"),
+                    "is_gap": st.column_config.TextColumn("状态"),
+                    "gap_reason": st.column_config.TextColumn("缺口原因"),
+                    "is_semi_finished": st.column_config.TextColumn("是否半成品"),
+                },
+            )
+            csv_data = bom_result.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                "📥 下载原料需求 CSV", data=csv_data,
+                file_name="bom_material_demand.csv", mime="text/csv",
+            )
+
+        with inner_tab_b:
+            st.markdown("#### 缺口预警（无有效单价 / 供应不稳定）")
+            gaps = gaps_only(bom_result)
+            if gaps.empty:
+                st.success("✅ 所有原料均有有效单价且供应稳定")
+            else:
+                gap_display = gaps[[
+                    "material", "gap_reason", "total_purchase_qty",
+                    "unit_price", "is_semi_finished",
+                ]].copy()
+                st.warning(f"发现 {len(gaps)} 个缺口项：")
+                st.dataframe(gap_display, use_container_width=True, height=400)
+
+        with inner_tab_c:
+            st.markdown("#### 统计概览")
+            col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+            col_stat1.metric("原料种类", len(bom_result))
+            col_stat2.metric("总采购成本(元)", f"{bom_result['total_cost'].sum():.2f}")
+            col_stat3.metric("半成品种类", int(bom_result["is_semi_finished"].sum()))
+            col_stat4.metric("缺口数量", int(bom_result["is_gap"].sum()))
+
+            if not bom_result["total_cost"].isna().all():
+                by_level = (
+                    bom_result.groupby("level")
+                    .agg({"material": "count", "total_purchase_qty": "sum", "total_cost": "sum"})
+                    .rename(columns={"material": "原料种类数"})
+                )
+                st.markdown("##### 按层级统计")
+                st.dataframe(by_level, use_container_width=True)
+
+        # ════════════════════════════════════════════════════════════════════
+        # Step 4: 成本核算概览
+        # ════════════════════════════════════════════════════════════════════
+        st.divider()
+        st.subheader("💰 Step 4: 成本核算概览")
+        total_cost = bom_result["total_cost"].sum()
+        total_purchase = bom_result["total_purchase_qty"].sum()
+        material_count = len(bom_result)
+        semi_count = int(bom_result["is_semi_finished"].sum())
+        gap_count = int(bom_result["is_gap"].sum())
+
+        col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+        col_c1.metric("原料种类", material_count)
+        col_c2.metric("总原料成本(元)", f"{total_cost:.2f}")
+        col_c3.metric("半成品种类", semi_count)
+        col_c4.metric("缺口数", gap_count)
+
+        # Cost breakdown by category (semi-finished vs raw)
+        st.markdown("##### 成本构成")
+        cost_by_type = bom_result.groupby("is_semi_finished").agg(
+            原料数=("material", "count"),
+            采购量=("total_purchase_qty", "sum"),
+            成本=("total_cost", "sum"),
+        ).reset_index()
+        cost_by_type["类型"] = cost_by_type["is_semi_finished"].map({True: "半成品", False: "原料"})
+        st.dataframe(cost_by_type[[
+            "类型", "原料数", "采购量", "成本"
+        ]].style.format({
+            "采购量": "{:.2f}", "成本": "{:.2f}",
+        }), use_container_width=True)
+
+    elif run_expand and bom_result is not None and bom_result.empty:
+        st.info("BOM 展开结果为空（可能选中的 SKU 在出品表中无配料数据）。")
+    else:
+        st.info("👆 完成 Step 2 后，在上方设置参数并点击「展开 BOM」，查看原料需求与成本。")
+
+# ── Tab6: 采购建议 ─────────────────────────────────────────────────────
 
 
 with tab6:
-    st.info("📌 **功能说明**：基于生产计划场景，展开三级 BOM（SKU→主原料/配料→原料），输出原料需求表和缺口预警。\n"
-             "**使用方法**：选择场景+日期范围+提前期+损耗率，点击「展开 BOM」生成原料需求表。\n"
-             "**字段含义**：total_purchase_qty=含损耗的安全备量；lead_days=提前采购天数；"
-             "is_gap=无有效单价或供应状态异常；latest_order_date=最晚下单日。")
-    st.subheader("备料计划 — BOM 展开引擎")
-    st.caption("三级展开：SKU → 主原料/配料 → 原料；支持损耗率、安全库存、最小采购单位、批次取整、提前期。")
-
-    # ── Init session ─────────────────────────────────────────────────
-    _init_session()
-    plans: dict = st.session_state["production_plans"]
-
-    # ── Controls ─────────────────────────────────────────────────────
-    col_ctrl1, col_ctrl2, col_ctrl3, col_ctrl4, col_ctrl5 = st.columns([2, 2, 1, 1, 1])
-
-    with col_ctrl1:
-        scenario_opts = [""] + list(plans.keys())
-        selected_scenario = st.selectbox("选择场景", options=scenario_opts, key="prep_scenario")
-
-    with col_ctrl2:
-        plan_type_opts = ["all", "sales", "production"]
-        plan_type_label = {"all": "全部", "sales": "销量计划", "production": "生产计划"}
-        selected_type = st.selectbox(
-            "计划类型",
-            options=plan_type_opts,
-            format_func=lambda x: plan_type_label[x],
-            key="prep_plan_type",
-        )
-
-    with col_ctrl3:
-        default_ld = st.number_input(
-            "提前期（天）",
-            min_value=0,
-            max_value=90,
-            value=3,
-            key="prep_lead_days",
-        )
-
-    with col_ctrl4:
-        default_loss = st.number_input(
-            "损耗率（%）",
-            min_value=0,
-            max_value=100,
-            value=0,
-            key="prep_loss_rate",
-        ) / 100.0
-
-    with col_ctrl5:
-        basis_opts = ["store", "factory"]
-        basis_label = {"store": "门店(加价后单价)", "factory": "出厂(加价前单价)"}
-        selected_basis = st.selectbox(
-            "单价口径",
-            options=basis_opts,
-            format_func=lambda x: basis_label[x],
-            key="prep_basis",
-        )
-
-    col_date1, col_date2, col_date3 = st.columns([1, 1, 2])
-    with col_date1:
-        start_date = st.date_input("开始日期", value=None, key="prep_start")
-    with col_date2:
-        end_date = st.date_input("结束日期", value=None, key="prep_end")
-    with col_date3:
-        st.write("")
-        st.write("")
-        run_expand = st.button("🔍 展开 BOM", type="primary", use_container_width=True)
-
-    # ── Expand ────────────────────────────────────────────────────────
-    if run_expand:
-        if not selected_scenario:
-            st.warning("请先选择一个已保存的场景（先在「生产计划录入」tab 中录入并保存计划）。")
-        else:
-            rows: List[ProductionRow] = plans.get(selected_scenario, [])
-            if not rows:
-                st.info("该场景暂无数据。")
-            else:
-                # Filter by date range and plan type
-                start_dt = start_date
-                end_dt   = end_date
-
-                filtered = []
-                for r in rows:
-                    if selected_type != "all" and r.plan_type != selected_type:
-                        continue
-                    rdate = _parse_date(r.date)
-                    if rdate is None:
-                        filtered.append(r)
-                        continue
-                    if start_dt and rdate < start_dt:
-                        continue
-                    if end_dt and rdate > end_dt:
-                        continue
-                    filtered.append(r)
-
-                if not filtered:
-                    st.info("日期范围内无数据。")
-                else:
-                    # Build sku→plan_qty dict (sum across selected rows)
-                    sku_qty: Dict[str, float] = {}
-                    for r in filtered:
-                        k = str(r.sku_key).strip()
-                        if k:
-                            sku_qty[k] = sku_qty.get(k, 0.0) + float(r.qty)
-
-                    # Target order date = end of range (latest delivery)
-                    target_date: Optional[date] = end_dt
-
-                    with st.spinner("BOM 展开中…"):
-                        t0 = dt.datetime.now()
-                        result = bom_expand_multi(
-                            wb.sheets,
-                            sku_qty,
-                            order_date=target_date,
-                            basis=selected_basis,
-                            default_lead_days=default_ld,
-                            default_loss_rate=default_loss,
-                            default_safety_stock=0.0,
-                        )
-                        elapsed = (dt.datetime.now() - t0).total_seconds()
-
-                    st.success(f"展开完成，耗时 {elapsed:.2f}s（目标 <3s）")
-
-                    if result.empty:
-                        st.info("BOM 展开结果为空（可能选中的 SKU 在出品表中无配料数据）。")
-                    else:
-                        # Tabs within tab6
-                        inner_tab_a, inner_tab_b, inner_tab_c = st.tabs(
-                            ["📦 原料需求汇总", "⚠️ 缺口预警", "📊 统计概览"]
-                        )
-
-                        with inner_tab_a:
-                            st.markdown("#### 原料需求汇总表")
-                            # Format for display
-                            display = result.copy()
-                            display["is_gap"] = display["is_gap"].map(
-                                lambda x: "⚠️ 缺口" if x else "✅ 正常"
-                            )
-                            st.dataframe(
-                                display,
-                                use_container_width=True,
-                                height=500,
-                                column_config={
-                                    "total_gross_qty": st.column_config.NumberColumn(
-                                        "总需求(含损耗)", format="%.2f"
-                                    ),
-                                    "total_safety_stock": st.column_config.NumberColumn(
-                                        "总安全库存", format="%.2f"
-                                    ),
-                                    "total_purchase_qty": st.column_config.NumberColumn(
-                                        "建议采购量", format="%.2f"
-                                    ),
-                                    "unit_price": st.column_config.NumberColumn(
-                                        "单价(元)", format="%.4f"
-                                    ),
-                                    "total_cost": st.column_config.NumberColumn(
-                                        "采购成本(元)", format="%.2f"
-                                    ),
-                                    "lead_days": st.column_config.NumberColumn("提前期(天)"),
-                                },
-                            )
-                            csv_data = result.to_csv(index=False).encode("utf-8-sig")
-                            st.download_button(
-                                "📥 下载原料需求 CSV",
-                                data=csv_data,
-                                file_name="bom_material_demand.csv",
-                                mime="text/csv",
-                            )
-
-                        with inner_tab_b:
-                            st.markdown("#### 缺口预警（无有效单价 / 供应不稳定）")
-                            gaps = gaps_only(result)
-                            if gaps.empty:
-                                st.success("✅ 所有原料均有有效单价且供应稳定")
-                            else:
-                                gap_display = gaps.copy()
-                                st.warning(f"发现 {len(gaps)} 个缺口项：")
-                                st.dataframe(
-                                    gap_display[[
-                                        "material", "gap_reason", "total_purchase_qty",
-                                        "unit_price", "is_semi_finished", "sku_keys",
-                                    ]],
-                                    use_container_width=True,
-                                    height=400,
-                                )
-
-                        with inner_tab_c:
-                            st.markdown("#### 统计概览")
-                            col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
-                            col_stat1.metric("原料种类", len(result))
-                            col_stat2.metric(
-                                "总采购成本(元)",
-                                f"{result['total_cost'].sum():.2f}",
-                            )
-                            col_stat3.metric(
-                                "半成品种类",
-                                int(result["is_semi_finished"].sum()),
-                            )
-                            col_stat4.metric("缺口数量", int(result["is_gap"].sum()))
-
-                            if not result["total_cost"].isna().all():
-                                by_level = (
-                                    result.groupby("level")
-                                    .agg(
-                                        {
-                                            "material": "count",
-                                            "total_purchase_qty": "sum",
-                                            "total_cost": "sum",
-                                        }
-                                    )
-                                    .rename(columns={"material": "原料种类数"})
-                                )
-                                st.markdown("##### 按层级统计")
-                                st.dataframe(by_level, use_container_width=True)
-
-    else:
-        # Show guidance when not yet run
-        st.divider()
-        st.info(
-            "👆 在上方选择场景和日期范围，点击「展开 BOM」开始。\n\n"
-            "提示：\n"
-            "• 场景在「生产计划录入」tab 中创建并保存\n"
-            "• 日期留空表示不限制范围\n"
-            "• 缺口预警 tab 展示无有效单价或供应不稳定的原料"
-        )
-
-
-# ── Tab7: 采购建议 ─────────────────────────────────────────────────────
-
-
-with tab7:
-    st.info("📌 **功能说明**：基于备料计划的原料需求，生成采购建议清单（含紧急项标注）。\n"
+    st.info("📌 **功能说明**：基于产销计划的原料需求，生成采购建议清单（含紧急项标注）。\n"
              "**使用方法**：选择生产计划场景和日期范围，点击「生成采购建议」。\n"
              "**字段含义**：下单日期=最晚采购日；到货日期=原料到达日期；"
              "is_urgent=已过期或今日需下单（红色高亮）；来源SKU=使用该原料的产品。")
     st.subheader("采购建议")
-    st.caption("基于备料计划输出采购清单：下单日期、到货日期、原料、数量、单位、来源 SKU；红色标注最晚下单日（已过或今日）。")
+    st.caption("基于产销计划输出采购清单：下单日期、到货日期、原料、数量、单位、来源 SKU；红色标注最晚下单日（已过或今日）。")
 
     _init_session()
     plans: dict = st.session_state["production_plans"]
@@ -1218,7 +1172,7 @@ with tab7:
 
     if run_ps:
         if not ps_selected_scenario:
-            st.warning("请先选择一个已保存的场景（先在「生产计划录入」tab 中录入并保存计划）。")
+            st.warning("请先选择一个已保存的场景（先在「产销计划」tab 中录入并保存计划）。")
         else:
             rows: List[ProductionRow] = plans.get(ps_selected_scenario, [])
             if not rows:
@@ -1351,12 +1305,12 @@ with tab7:
             "👆 在上方选择场景和日期范围，点击「生成采购建议」开始。\n\n"
             "提示：\n"
             "• 红色标注的行表示最晚下单日已过，请优先处理\n"
-            "• 采购建议基于备料计划展开（仅原材料，不含半成品）\n"
+            "• 采购建议基于产销计划展开（仅原材料，不含半成品）\n"
             "• 「展开 BOM」tab 可查看详细备料数据"
         )
 
 
-# ── Tab8: 产品组合评估 ─────────────────────────────────────────────────
+# ── Tab7: 产品组合评估 ─────────────────────────────────────────────────
 
 # Build SKU list once
 _all_skus_for_portfolio = sorted(_profit_df["product_key"].dropna().unique().tolist())
@@ -1369,7 +1323,7 @@ def _init_portfolio_session():
             st.session_state[slot] = {}  # {sku_key: qty}
 
 
-with tab8:
+with tab7:
     st.info("📌 **功能说明**：多选产品+填数量，实时计算总销售额/成本/毛利/净利/原料种类/产能压力。\n"
              "**使用方法**：multiselect 选 SKU → 填数量 → 切换口径 → 实时查看 KPI；保存方案 A/B/C 后可对比。\n"
              "**字段含义**：Revenue=定价×数量；Gross_profit=毛利额；Capacity_pressure=产能压力评分（0-100）；"
@@ -1548,7 +1502,7 @@ with tab8:
         )
 
 
-# ── Tab9: 多场景对比 ─────────────────────────────────────────────────
+# ── Tab8: 多场景对比 ─────────────────────────────────────────────────
 
 
 def _init_multi_scenario_session():
@@ -1556,7 +1510,7 @@ def _init_multi_scenario_session():
         st.session_state["ms_scenarios"] = {}  # name -> dict of {sku_key: qty}
 
 
-with tab9:
+with tab8:
     st.info("📌 **功能说明**：创建多组销量假设（A/B/C），对比各方案下的总利润、原料需求、SKU 变动。\n"
              "**使用方法**：新建多个场景并填入 SKU 数量 → 点击「对比场景」→ 查看汇总表+差异表。\n"
              "**字段含义**：total_profit=该方案净利润；material_qty=总原料需求量；"
@@ -1760,10 +1714,10 @@ with tab9:
         )
 
 
-# ── Tab10: 选品优化器 ─────────────────────────────────────────────────
+# ── Tab9: 选品优化器 ─────────────────────────────────────────────────
 
 
-with tab10:
+with tab9:
     st.info("📌 **功能说明**：在给定约束（产能/预算/销量下限）下，枚举所有可行 SKU 组合，返回利润 Top-3 并给出推荐理由。\n"
              "**使用方法**：选择候选 SKU 池 → 设置约束条件 → 点击「运行优化」→ 查看推荐方案。\n"
              "**字段含义**：max_capacity=单品总件数上限；material_budget=原料采购总预算（元）；"
@@ -2032,174 +1986,4 @@ with tab10:
             data=csv_bytes,
             file_name="optimizer_top3_portfolios.csv",
             mime="text/csv",
-        )
-
-
-# ── Tab11: 产能需求估算 ────────────────────────────────────────────────────────────────────
-
-with tab11:
-    st.info("📌 **功能说明**：基于生产计划，估算各 SKU/日期的产能压力评分（0-100），高压力项红色标注。\n"
-             "**使用方法**：选择生产计划场景 → 选择「按 SKU」或「按日期」视图 → 点击分析 → 查看评分和柱状图。\n"
-             "**字段含义**：score=产能压力总分；complexity_score=SKU 种类复杂度得分；"
-             "volume_score=产量体积得分；material_score=原料多样性得分；≥60=高压力（红色）。")
-    st.subheader("产能需求估算")
-
-    _init_session()
-    plans: dict = st.session_state["production_plans"]
-
-    # Controls
-    col_cp1, col_cp2, col_cp3, col_cp4 = st.columns([2, 2, 1, 1])
-
-    with col_cp1:
-        cp_scenario_opts = [""] + list(plans.keys())
-        cp_selected_scenario = st.selectbox(
-            "选择场景", options=cp_scenario_opts, key="cp_scenario"
-        )
-
-    with col_cp2:
-        cp_plan_type_opts = ["all", "sales", "production"]
-        cp_plan_type_label = {"all": "全部", "sales": "销量计划", "production": "生产计划"}
-        cp_selected_type = st.selectbox(
-            "计划类型",
-            options=cp_plan_type_opts,
-            format_func=lambda x: cp_plan_type_label[x],
-            key="cp_plan_type",
-        )
-
-    with col_cp3:
-        cp_view_by = st.radio(
-            "视图",
-            options=["sku", "date"],
-            format_func=lambda x: "按 SKU" if x == "sku" else "按日期",
-            horizontal=True,
-            key="cp_view_by",
-        )
-
-    with col_cp4:
-        st.write("")
-        st.write("")
-        run_cp = st.button("📊 分析产能压力", type="primary", use_container_width=True)
-
-    if run_cp:
-        if not cp_selected_scenario:
-            st.warning("请先选择一个已保存的场景（先在「生产计划录入」tab 中录入并保存计划）。")
-        else:
-            rows: List[ProductionRow] = plans.get(cp_selected_scenario, [])
-            if not rows:
-                st.info("该场景暂无数据。")
-            else:
-                # Filter by plan type
-                if cp_selected_type != "all":
-                    rows = [r for r in rows if r.plan_type == cp_selected_type]
-
-                if not rows:
-                    st.info("当前计划类型下无数据。")
-                else:
-                    # Compute capacity pressure
-                    if cp_view_by == "sku":
-                        cp_results = score_capacity_from_plan(rows, wb.sheets)
-                    else:
-                        cp_results = score_capacity_by_date(rows, wb.sheets)
-
-                    cp_df = capacity_to_dataframe(cp_results)
-
-                    if cp_df.empty:
-                        st.info("无法计算产能压力（可能选中的 SKU 在出品表中无配料数据）。")
-                    else:
-                        # Summary metrics
-                        total = len(cp_df)
-                        high_count = int(cp_df["is_high_pressure"].sum())
-                        avg_score = float(cp_df["score"].mean())
-
-                        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-                        col_m1.metric("SKU/日期数", total)
-                        col_m2.metric("高压力项", high_count, delta_color="inverse")
-                        col_m3.metric("平均压力分", f"{avg_score:.1f}")
-                        col_m4.metric("最高压力分", f"{float(cp_df['score'].max()):.1f}")
-
-                        # Bar chart: score distribution
-                        st.divider()
-                        st.markdown("#### 产能压力柱状图（压力分从高到低）")
-                        chart_df = cp_df[["sku_key", "score"]].copy()
-                        # Shorten sku_key for display
-                        chart_df["label"] = chart_df["sku_key"].apply(
-                            lambda x: x.split("|")[1] if "|" in x else x[:30]
-                        )
-                        chart_df = chart_df.set_index("label")
-                        st.bar_chart(chart_df["score"])
-
-                        # Breakdown chart: score components
-                        st.markdown("#### 各维度得分明细")
-                        st.bar_chart(
-                            cp_df.set_index(
-                                cp_df["sku_key"].apply(
-                                    lambda x: x.split("|")[1] if "|" in x else x[:20]
-                                )
-                            )[["complexity_score", "volume_score", "material_score"]]
-                        )
-
-                        # Highlighted table
-                        st.divider()
-                        st.markdown("#### 产能压力明细表（高压力项红色标注）")
-
-                        display_cp = cp_df.copy()
-                        display_cp["压力等级"] = display_cp["is_high_pressure"].map(
-                            lambda x: "🔴 高压力" if x else "🟢 正常"
-                        )
-
-                        # Format for display
-                        st.dataframe(
-                            display_cp[[
-                                "sku_key", "score", "压力等级",
-                                "complexity_score", "volume_score", "material_score",
-                                "material_count", "plan_qty",
-                            ]],
-                            use_container_width=True,
-                            height=480,
-                            column_config={
-                                "score": st.column_config.NumberColumn(
-                                    "总分(0-100)", format="%.1f"
-                                ),
-                                "complexity_score": st.column_config.NumberColumn(
-                                    "SKU复杂度分", format="%.1f"
-                                ),
-                                "volume_score": st.column_config.NumberColumn(
-                                    "产量体积分", format="%.1f"
-                                ),
-                                "material_score": st.column_config.NumberColumn(
-                                    "原料多样性分", format="%.1f"
-                                ),
-                                "material_count": st.column_config.NumberColumn("原料种类数"),
-                                "plan_qty": st.column_config.NumberColumn("计划产量", format="%.0f"),
-                            },
-                        )
-
-                        # Download
-                        csv_cp = cp_df.to_csv(index=False).encode("utf-8-sig")
-                        st.download_button(
-                            "📥 下载产能压力 CSV",
-                            data=csv_cp,
-                            file_name="capacity_pressure.csv",
-                            mime="text/csv",
-                        )
-
-                        # High pressure list
-                        high_df = cp_df[cp_df["is_high_pressure"]].copy()
-                        if not high_df.empty:
-                            st.divider()
-                            st.error(f"⚠️ 发现 {len(high_df)} 个高压力项（≥60分），请优先处理：")
-                            high_display = high_df[[
-                                "sku_key", "score",
-                                "complexity_score", "volume_score", "material_score",
-                                "material_count", "plan_qty",
-                            ]].copy()
-                            st.dataframe(high_display, use_container_width=True, height=260)
-    else:
-        st.divider()
-        st.info(
-            "👆 在上方选择场景，点击「分析产能压力」开始。\n\n"
-            "提示：\n"
-            "• 按 SKU：按 SKU 聚合，显示每个 SKU 的产能压力\n"
-            "• 按日期：按「日期 × SKU」聚合，显示每日压力分布\n"
-            "• 红色标注的项表示总分 ≥60 分，为高压力"
         )
