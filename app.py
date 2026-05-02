@@ -935,9 +935,8 @@ with tab5:
                 spec="", qty=float(row["数量"]) if pd.notna(row["数量"]) else 0,
                 plan_type="production",
             ))
-        # Merge with existing sales plan
-        existing_sales = [r for r in plans.get(SALES_KEY, []) if r.plan_type == "sales"]
-        plans[PROD_KEY] = existing_sales + rows
+        # Save production rows only (do NOT merge sales rows — they'd be BOM-expanded again in Tab6)
+        plans[PROD_KEY] = rows
         _auto_save()
         st.session_state["_msg_prod_saved"] = f"✅ 已保存生产计划（{len(rows)} 行）"
         st.rerun()
