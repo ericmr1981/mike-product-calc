@@ -418,28 +418,33 @@ def _collect_bom_entries(
                 is_semi_finished=False, source_sheet=sheet_name,
             ))
     else:
-        # ── Path B: recipe item name (e.g. "榛子巧克力布朗尼 2.0") ──
+        # ── Path B: raw material or recipe item name ──
+        # Try recipe expansion first
         recipe_by_name = _build_recipe_by_name(recipe_index)
         recipe = recipe_by_name.get(sku_key)
-        if recipe is None:
-            return entries
-        denom = float(recipe.get("denom") or 0.0)
-        if denom <= 0:
-            return entries
-        # Each recipe "unit" = 1 batch. Plan qty is in batches.
-        # Ingredient qty = plan_qty × (ingredient用量 / recipe总用量)
-        for ing_name, ing_qty in recipe.get("rows", []):
-            iname = str(ing_name).strip()
-            if not iname:
-                continue
-            # qty_per_unit = ing_qty / denom (fraction of batch per unit of production plan)
+        if recipe is not None and recipe.get("denom", 0) > 0:
+            # It has a recipe — expand into ingredients
+            denom = float(recipe["denom"])
+            for ing_name, ing_qty in recipe.get("rows", []):
+                iname = str(ing_name).strip()
+                if not iname:
+                    continue
+                entries.append(BomEntry(
+                    sku_key=sku_key, material=iname,
+                    level=2, qty_per_unit=float(ing_qty) / denom,
+                    unit="", loss_rate=0.0, safety_stock=0.0,
+                    min_purchase=0.0, lead_days=0,
+                    is_semi_finished=False,
+                    source_sheet=str(recipe.get("sheet", "")),
+                ))
+        else:
+            # No recipe — treat as raw material leaf item (level 1)
             entries.append(BomEntry(
-                sku_key=sku_key, material=iname,
-                level=2, qty_per_unit=float(ing_qty) / denom,
+                sku_key=sku_key, material=sku_key,
+                level=1, qty_per_unit=1.0,
                 unit="", loss_rate=0.0, safety_stock=0.0,
                 min_purchase=0.0, lead_days=0,
-                is_semi_finished=False,
-                source_sheet=str(recipe.get("sheet", "")),
+                is_semi_finished=False, source_sheet="",
             ))
 
     return entries
@@ -747,38 +752,49 @@ def sales_to_production(
     lead_days: int = 1,
 ) -> List["ProductionRow"]:
     """
-    Convert sales plan rows to production plan rows by expanding each sales SKU
-    through the 产品出品表 recipe, then dividing by the batch weight from
-    产品成本计算表.
+    Convert sales plan rows to production plan rows, expanding directly to
+    recipe ingredient level.
 
-    For each sales row (finished product SKU, qty, date):
-      1. Extract category from SKU key (format: 品类|品名|规格)
-      2. Look up 产品出品表_{category} sheet — find 主原料 + 用量 per unit
-      3. Look up 产品成本计算表_{category} sheet — find 规格 (batch weight in g)
-      4. production_qty = (sales_qty × 用量) / 规格  ← batches to produce
-      5. production_date = sales_date - lead_days
-      6. Aggregate same production items on same dates
+    Formula per ingredient (from 产品配方表):
+      ingredient_qty = sales_qty × 产品出品表.主原料用量 × 配方表.该配料用量 / denom
 
-    Returns a list of ProductionRow with plan_type="production".
+    Where denom = sum(配方表.用量) = 产品成本计算表.规格 (batch weight in g).
+
+    Example: Gelato|榛子巧克力布朗尼|小杯 × 10
+      出品表: 主原料=榛子巧克力布朗尼 2.0, 用量=120g
+      配方表: 原味奶浆JYX001 2000g, 榛子巧克力 200g, 纯牛奶 100g
+      denom=2300 (batch weight from 产品成本计算表)
+
+      原味奶浆JYX001: 10×120×2000/2300 = 1043g
+      榛子巧克力:     10×120×200/2300  = 104g
+      纯牛奶:         10×120×100/2300  = 52g
+
+    Returns ProductionRow list with plan_type="production".
     """
     from mike_product_calc.model.production import ProductionRow
 
     if not sales_rows or not sheets:
         return []
 
-    # Build batch-weight lookup: material_name → batch_weight (from 产品成本计算表)
-    batch_specs: Dict[str, float] = {}
+    # Build recipe index: name → {rows: [(ingredient, qty), ...], denom}
+    recipe_index: Dict[str, dict] = {}
     for sname in sheets:
-        if "产品成本计算表" in sname:
+        if "产品配方表" in sname or "半成品配方表" in sname:
             df = sheets[sname]
-            if "品名" in df.columns and "规格" in df.columns:
-                for _, row in df.iterrows():
-                    name = str(row.get("品名", "")).strip()
-                    spec = to_float(row.get("规格"))
-                    if name and name not in batch_specs and spec and spec > 0:
-                        batch_specs[name] = spec
+            if not {"品名", "配料", "用量"}.issubset(set(df.columns)):
+                continue
+            for _, r in df.iterrows():
+                name = str(r.get("品名", "")).strip()
+                ing = str(r.get("配料", "")).strip()
+                qty = to_float(r.get("用量"))
+                if not name or not ing or qty is None or qty <= 0:
+                    continue
+                if name not in recipe_index:
+                    recipe_index[name] = {"rows": [], "denom": 0.0}
+                recipe_index[name]["rows"].append((ing, float(qty)))
+                recipe_index[name]["denom"] += float(qty)
 
-    out_rows: Dict[tuple, float] = {}  # (date, sku_key, spec) -> qty
+    out_rows: Dict[tuple, float] = {}  # (date, material_name) -> total_qty
 
     for row in sales_rows:
         if row.plan_type != "sales":
@@ -790,7 +806,7 @@ def sales_to_production(
         product_name = parts[1].strip()
         spec = parts[2].strip() if len(parts) > 2 else row.spec
 
-        # Find the matching 产品出品表 sheet
+        # Find matching 产品出品表 sheet
         sheet_name = None
         for sname in sheets:
             if sname.startswith("产品出品表_") and category in sname:
@@ -809,8 +825,8 @@ def sales_to_production(
         if not match_mask.any():
             match_mask = df["品名"].fillna("").astype(str).str.strip() == product_name
 
-        recipe_rows = df[match_mask]
-        if recipe_rows.empty:
+        output_rows = df[match_mask]
+        if output_rows.empty:
             continue
 
         # Date
@@ -824,33 +840,39 @@ def sales_to_production(
         prod_date = sales_date - timedelta(days=lead_days)
         prod_date_str = prod_date.strftime("%Y-%m-%d")
 
-        # For each recipe row (main material only = ice cream bases)
-        for _, recipe_row in recipe_rows.iterrows():
-            main_material = str(recipe_row.get("主原料", "")).strip()
+        # For each 出品表 row, get 主原料 and find its recipe
+        for _, out_row in output_rows.iterrows():
+            main_material = str(out_row.get("主原料", "")).strip()
             if not main_material or main_material.lower() in ("nan", ""):
                 continue
-            qty_usage = to_float(recipe_row.get("用量"))
-            if qty_usage is None or qty_usage <= 0:
+            usage_per_unit = to_float(out_row.get("用量"))
+            if usage_per_unit is None or usage_per_unit <= 0:
                 continue
 
-            # Total grams needed = sales qty × recipe usage per unit
-            total_grams = row.qty * qty_usage
+            # Total grams of main material needed
+            total_main_grams = row.qty * usage_per_unit
 
-            # Get batch weight from 产品成本计算表
-            batch_weight = batch_specs.get(main_material)
-            if batch_weight and batch_weight > 0:
-                prod_qty = total_grams / batch_weight
-            else:
-                # Fallback: return raw grams if no batch spec
-                prod_qty = total_grams
+            # Look up this main material's recipe
+            recipe = recipe_index.get(main_material)
+            if recipe is None:
+                continue
 
-            key = (prod_date_str, main_material, "")
-            out_rows[key] = out_rows.get(key, 0) + prod_qty
+            denom = recipe["denom"]
+            if denom <= 0:
+                continue
+
+            # For each ingredient in the recipe, apply the formula:
+            # ingredient_qty = sales_qty × 出品表.用量 × (配方表.用量 / denom)
+            #                = total_main_grams × (ing_qty / denom)
+            for ing_name, ing_qty in recipe["rows"]:
+                ingredient_grams = total_main_grams * (ing_qty / denom)
+                key = (prod_date_str, ing_name)
+                out_rows[key] = out_rows.get(key, 0) + ingredient_grams
 
     result = sorted(
         [
-            ProductionRow(date=d, sku_key=k, spec=s, qty=round(q, 2), plan_type="production")
-            for (d, k, s), q in out_rows.items()
+            ProductionRow(date=d, sku_key=k, spec="", qty=round(q, 2), plan_type="production")
+            for (d, k), q in out_rows.items()
         ],
         key=lambda r: (r.date, r.sku_key),
     )
