@@ -17,6 +17,7 @@ if str(SRC) not in sys.path:
 import pandas as pd
 import streamlit as st
 
+from mike_product_calc.calc.recipe import build_recipe_table
 from mike_product_calc.calc.material_sim import (
     MaterialCatalog,
     Scenario,
@@ -528,6 +529,28 @@ with tab2:
                     file_name="f003_target_pricing.csv",
                     mime="text/csv",
                 )
+
+                st.divider()
+                st.markdown("#### 主原料配方拆解")
+                st.caption("展开主原料的配方，查看子配料明细。门店价格可调，自动重算成本。")
+
+                recipe_df = build_recipe_table(wb.sheets, product_key=pick, basis=basis)
+                if recipe_df.empty:
+                    st.info("该 SKU 暂无配方明细数据。")
+                else:
+                    st.dataframe(
+                        recipe_df,
+                        use_container_width=True,
+                        height=360,
+                        column_config={
+                            "usage_qty": st.column_config.NumberColumn("用量", format="%.3f"),
+                            "cost": st.column_config.NumberColumn("成本", format="%.4f"),
+                            "spec": st.column_config.TextColumn("规格"),
+                            "store_price": st.column_config.NumberColumn("门店价格", format="%.2f"),
+                            "brand_cost": st.column_config.NumberColumn("品牌成本", format="%.2f"),
+                            "profit_rate": st.column_config.NumberColumn("利润率", format="%.2f"),
+                        },
+                    )
 
 with tab3:
     st.info("📌 **功能说明**：浏览工作簿中任意 sheet 的原始数据。\n"
