@@ -69,7 +69,7 @@ from mike_product_calc.state import get_store
 
 st.set_page_config(page_title="mike-product-calc", layout="wide")
 
-st.title("蜜可诗产品经营决策台 (mike-product-calc)")
+st.title("蜜可诗产品经营决策台")
 st.caption("当前版本：Excel 解析 / 校验、SKU 毛利分析（双口径）、F-002 oracle、F-003 第一版反推定价。")
 
 # ── 上传文件持久化（磁盘级，可删除/替换）────────────────────────────────────
