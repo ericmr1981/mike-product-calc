@@ -8,10 +8,16 @@ Provides:
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import pandas as pd
+
+# Level constants for recipe hierarchy
+LEVEL_DIRECT = 0  # direct ingredient
+LEVEL_SEMI = 1    # semi-product (rolled-up parent row)
+LEVEL_SUB = 2     # sub-ingredient of a semi-product
 
 
 @dataclass
@@ -122,6 +128,37 @@ def _to_float(v) -> Optional[float]:
         return None
 
 
+def _lookup_usage_map(
+    sheets: Dict[str, pd.DataFrame],
+    product_key: str,
+) -> Dict[str, tuple[float, str]]:
+    """Build {item_name: (usage_qty, usage_unit)} from ALL rows matching product_key in 产品出品表."""
+    usage_map: Dict[str, tuple[float, str]] = {}
+    for sname in sheets:
+        if "产品出品表" not in sname:
+            continue
+        df = sheets[sname]
+        pk = df.apply(lambda r: "|".join(
+            str(r.get(c, "")).strip()
+            for c in ["品类", "品名", "规格"] if c in df.columns
+        ), axis=1)
+        mask = pk == product_key
+        if not mask.any():
+            continue
+        # Iterate ALL matching rows — products may have multiple ingredient rows
+        for _, match in df[mask].iterrows():
+            main_mat = str(match.get("主原料", "")).strip()
+            ing = str(match.get("配料", "")).strip()
+            item = ing or main_mat
+            if not item:
+                continue
+            qty = _to_float(match.get("用量")) or 0.0
+            unit = str(match.get("单位", "")).strip() or ""
+            usage_map[item] = (qty, unit)
+        break  # only process the first 产品出品表 sheet found
+    return usage_map
+
+
 def build_recipe_table(
     sheets: Dict[str, pd.DataFrame],
     *,
@@ -143,34 +180,15 @@ def build_recipe_table(
     spec_map = get_brand_spec_map(sheets)
     semi_recipes = get_semi_product_recipes(sheets)
 
+    usage_map = _lookup_usage_map(sheets, product_key)
+
     rows: List[RecipeRow] = []
     for _, b_row in breakdown.iterrows():
         item = b_row["item"]
-        bucket = b_row["bucket"]
         cost_val = _to_float(b_row["cost"]) or 0.0
 
-        # Look up usage qty from 产品出品表
-        usage_qty = 0.0
-        usage_unit = ""
-        for sname in sheets:
-            if "产品出品表" in sname:
-                df = sheets[sname]
-                # Build product keys
-                pk = df.apply(lambda r: "|".join(
-                    str(r.get(c, "")).strip()
-                    for c in ["品类", "品名", "规格"] if c in df.columns
-                ), axis=1)
-                mask = pk == product_key
-                if mask.any():
-                    match = df[mask].iloc[0]
-                    # Determine if this row matches current item
-                    main_mat = str(match.get("主原料", "")).strip()
-                    ing = str(match.get("配料", "")).strip()
-                    row_item = ing or main_mat
-                    if row_item == item:
-                        usage_qty = _to_float(match.get("用量")) or 0.0
-                        usage_unit = str(match.get("单位", "")).strip() or ""
-                    break
+        # Look up usage qty from 产品出品表 via the pre-built map
+        usage_qty, usage_unit = usage_map.get(item, (0.0, ""))
 
         brand_cost = brand_cost_map.get(item, 0.0)
         spec = spec_map.get(item, "")
@@ -198,7 +216,7 @@ def build_recipe_table(
                 store_price=store_price,
                 brand_cost=round(brand_cost, 4),
                 profit_rate=round(profit_rate, 4),
-                level=0,
+                level=LEVEL_DIRECT,
                 is_semi=False,
             ))
         else:
@@ -232,7 +250,7 @@ def build_recipe_table(
                     store_price=sub_store_price,
                     brand_cost=round(sub_brand_cost, 4),
                     profit_rate=round(sub_profit_rate, 4),
-                    level=2,
+                    level=LEVEL_SUB,
                     is_semi=False,
                 ))
 
@@ -246,7 +264,7 @@ def build_recipe_table(
                 store_price=0,
                 brand_cost=0,
                 profit_rate=0,
-                level=1,
+                level=LEVEL_SEMI,
                 is_semi=True,
             ))
             rows.extend(sub_rows)
@@ -270,13 +288,28 @@ def build_recipe_table(
     return df
 
 
+_UNIT_MAP = {
+    "g": 0.001,
+    "ml": 0.001,
+    "kg": 1.0,
+    "l": 1.0,
+    "斤": 0.5,
+    "个": 1.0,
+    "只": 1.0,
+}
+
+
 def _parse_spec(spec_str: str) -> Optional[float]:
-    """Parse spec like '1 kg', '0.5 L', '500 g' → numeric value in base unit."""
+    """Parse spec like '1 kg', '0.5 L', '500 g' → numeric value in base unit (kg/L)."""
     if not spec_str or spec_str in ("—", "-", "nan"):
         return None
-    import re
-    m = re.match(r"([\d.]+)", spec_str.strip())
-    return float(m.group(1)) if m else None
+    m = re.match(r"([\d.]+)\s*(.*)", spec_str.strip())
+    if not m:
+        return None
+    value = float(m.group(1))
+    unit = m.group(2).strip().lower()
+    factor = _UNIT_MAP.get(unit, 1.0)
+    return value * factor
 
 
 def _calc_profit_rate(store_price: float, brand_cost: float) -> float:

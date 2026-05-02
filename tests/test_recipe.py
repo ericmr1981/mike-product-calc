@@ -9,7 +9,11 @@ from mike_product_calc.calc.recipe import (
     get_brand_cost_map,
     get_brand_spec_map,
     build_recipe_table,
-    RecipeRow,
+    _parse_spec,
+    _lookup_usage_map,
+    LEVEL_DIRECT,
+    LEVEL_SEMI,
+    LEVEL_SUB,
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -80,3 +84,91 @@ def test_build_recipe_table(sheets):
     expected_cols = ["item", "usage_qty", "cost", "spec", "store_price", "brand_cost", "profit_rate"]
     for col in expected_cols:
         assert col in table_df.columns, f"Missing column: {col}"
+
+
+# ── Mock data tests ──────────────────────────────────────────────
+
+
+def test_get_brand_cost_map_mock():
+    sheets = {
+        "总原料成本表": pd.DataFrame({
+            "品项名称": ["原料A", "原料B"],
+            "原料价格": [10.5, 20.3],
+        })
+    }
+    result = get_brand_cost_map(sheets)
+    assert result == {"原料A": 10.5, "原料B": 20.3}
+
+
+def test_get_brand_cost_map_mock_missing_sheet():
+    assert get_brand_cost_map({}) == {}
+
+
+def test_get_brand_cost_map_mock_missing_columns():
+    sheets = {"总原料成本表": pd.DataFrame({"foo": ["a"], "bar": [1]})}
+    assert get_brand_cost_map(sheets) == {}
+
+
+def test_get_brand_spec_map_mock():
+    sheets = {
+        "总原料成本表": pd.DataFrame({
+            "品项名称": ["原料A", "原料B"],
+            "规格": ["1 kg", "500 g"],
+        })
+    }
+    result = get_brand_spec_map(sheets)
+    assert result == {"原料A": "1 kg", "原料B": "500 g"}
+
+
+def test_parse_spec_with_units():
+    assert _parse_spec("1 kg") == 1.0
+    assert _parse_spec("500 g") == 0.5
+    assert _parse_spec("0.5 L") == 0.5
+    assert _parse_spec("250 ml") == 0.25
+    assert _parse_spec("—") is None
+    assert _parse_spec("") is None
+    assert _parse_spec("nan") is None
+    assert _parse_spec("2 斤") == 1.0
+    assert _parse_spec("10") == 10.0  # no unit, keep as-is
+
+
+def test_lookup_usage_map_mock():
+    """_lookup_usage_map returns usage qty for all ingredients of a product."""
+    sheets = {
+        "产品出品表_Gelato": pd.DataFrame({
+            "品类": ["Gelato", "Gelato", "Gelato"],
+            "品名": ["草莓", "草莓", "草莓"],
+            "规格": ["杯", "杯", "杯"],
+            "主原料": ["草莓果泥", "", ""],
+            "配料": ["", "全脂牛奶", "细砂糖"],
+            "用量": [0.15, 0.10, 0.05],
+            "单位": ["kg", "L", "kg"],
+        })
+    }
+    result = _lookup_usage_map(sheets, "Gelato|草莓|杯")
+    assert result == {
+        "草莓果泥": (0.15, "kg"),
+        "全脂牛奶": (0.10, "L"),
+        "细砂糖": (0.05, "kg"),
+    }
+
+
+def test_lookup_usage_map_mock_no_match():
+    sheets = {
+        "产品出品表_Gelato": pd.DataFrame({
+            "品类": ["Gelato"],
+            "品名": ["草莓"],
+            "规格": ["杯"],
+            "主原料": ["草莓果泥"],
+            "用量": [0.15],
+            "单位": ["kg"],
+        })
+    }
+    result = _lookup_usage_map(sheets, "Gelato|香草|杯")
+    assert result == {}
+
+
+def test_level_constants():
+    assert LEVEL_DIRECT == 0
+    assert LEVEL_SEMI == 1
+    assert LEVEL_SUB == 2
