@@ -19,32 +19,22 @@ import streamlit as st
 
 from mike_product_calc.calc.recipe import build_recipe_table
 from mike_product_calc.calc.material_sim import (
-    MaterialCatalog,
     Scenario,
     ScenarioStore,
-    SkuCostInfo,
     MaterialPriceAdjustment,
-    apply_scenario_to_sku_costs,
-    build_sku_cost_table,
     compare_scenarios,
-    get_builtin_scenarios,
-    highlight_negative_margin_rows,
-    recalc_profit_with_adjusted_costs,
 )
 from mike_product_calc.calc.prep_engine import (
-    bom_expand,
     bom_expand_multi,
-    highlight_gaps,
     gaps_only,
     sales_to_production,
 )
 from mike_product_calc.calc.profit import margin_delta_report, sku_cost_breakdown, sku_profit_table
 from mike_product_calc.calc.target_pricing import suggest_adjustable_item_costs
+from mike_product_calc.calc.recipe import build_recipe_table
 from mike_product_calc.model.production import ProductionRow
 from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.data.validator import issues_to_dataframe, validate_workbook
-from mike_product_calc.data.shared import build_product_key
-from mike_product_calc.model.production import ProductionPlan, ProductionRow
 from mike_product_calc.state import get_store
 
 
