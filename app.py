@@ -860,13 +860,15 @@ with tab5:
 
     # Production editor — always reads/writes PROD_KEY (generated or manually saved)
     prod_rows = plans.get(PROD_KEY, [])
-    prod_default = [{"日期": r.date, "生产项": r.sku_key, "数量": r.qty}
-                    for r in prod_rows if r.plan_type == "production"]
-    while len(prod_default) < 5:
-        prod_default.append({"日期": "", "生产项": "", "数量": 0})
+    prod_data_rows = [{"日期": r.date, "生产项": r.sku_key, "数量": r.qty}
+                      for r in prod_rows if r.plan_type == "production"]
+    if not prod_data_rows:
+        st.info("👆 先在「销售计划录入」中输入并保存销售计划，然后点击「从销售计划生成生产计划」。也可在此直接编辑录入。")
+    while len(prod_data_rows) < 5:
+        prod_data_rows.append({"日期": "", "生产项": "", "数量": 0})
 
     edited_prod = st.data_editor(
-        pd.DataFrame(prod_default), num_rows="dynamic", use_container_width=True,
+        pd.DataFrame(prod_data_rows), num_rows="dynamic", use_container_width=True,
         height=300,
         column_config={
             "日期": st.column_config.TextColumn("日期", required=True),
