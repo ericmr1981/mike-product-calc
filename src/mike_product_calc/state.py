@@ -77,23 +77,9 @@ class MpcState:
     # Material simulation versions: name -> list of adjustments
     material_sim_versions: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
-    # Portfolio saved versions (UI方案A/B/C + agent saved snapshots)
-    # slot -> {sku_key: qty}
-    portfolio_versions: Dict[str, Dict[str, float]] = field(
-        default_factory=lambda: {"A": {}, "B": {}, "C": {}}
-    )
-
     # Production plans (UI/CLI shared)
     # name -> list of {date, sku_key, spec, qty, plan_type}
     production_plans: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
-
-    # Optimizer constraints (snapshot)
-    optimizer_max_capacity: int = 200
-    optimizer_material_budget: float = 50000.0
-    optimizer_min_sales_per_sku: int = 1
-
-    # Last portfolio selections snapshot (sku_key -> qty)
-    last_portfolio_selections: Dict[str, float] = field(default_factory=dict)
 
     def touch(self) -> None:
         self.updated_at = datetime.now().isoformat()

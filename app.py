@@ -17,7 +17,7 @@ if str(SRC) not in sys.path:
 import pandas as pd
 import streamlit as st
 
-from mike_product_calc.calc.recipe import build_recipe_table
+from mike_product_calc.calc.recipe import build_recipe_table, _parse_spec, _calc_profit_rate
 from mike_product_calc.calc.material_sim import (
     Scenario,
     ScenarioStore,
@@ -31,7 +31,6 @@ from mike_product_calc.calc.prep_engine import (
 )
 from mike_product_calc.calc.profit import margin_delta_report, sku_cost_breakdown, sku_profit_table
 from mike_product_calc.calc.target_pricing import suggest_adjustable_item_costs
-from mike_product_calc.calc.recipe import build_recipe_table
 from mike_product_calc.model.production import ProductionRow
 from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.data.validator import issues_to_dataframe, validate_workbook
@@ -680,7 +679,6 @@ with tab4:
                 continue
 
             # Parse spec — use _parse_spec from recipe module
-            from mike_product_calc.calc.recipe import _parse_spec, _calc_profit_rate
             spec_val = _parse_spec(spec_str)
 
             calculated_cost = 0.0

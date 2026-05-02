@@ -170,9 +170,6 @@ def cmd_state_init(args: argparse.Namespace) -> int:
         price_version=args.price_version or "当前",
         scenario_name=args.scenario_name or "A",
         production_plan_name=args.production_plan,
-        optimizer_max_capacity=int(args.max_capacity) if args.max_capacity else 200,
-        optimizer_material_budget=float(args.material_budget) if args.material_budget else 50000.0,
-        optimizer_min_sales_per_sku=int(args.min_sales) if args.min_sales else 1,
     )
     _dump_json({"cmd": "state-init", "name": state.name, "state": state.to_dict()})
     return 0
@@ -566,9 +563,6 @@ def _add_state_subparser(sub: argparse._SubParsersAction) -> None:
     sp.add_argument("--price-version", default="当前", help="Price version")
     sp.add_argument("--scenario-name", default="A", help="Default scenario name")
     sp.add_argument("--production-plan", help="Production plan name")
-    sp.add_argument("--max-capacity", help="Optimizer: max capacity")
-    sp.add_argument("--material-budget", help="Optimizer: material budget")
-    sp.add_argument("--min-sales", help="Optimizer: min sales per SKU")
     sp.set_defaults(func=cmd_state_init)
 
     # load
