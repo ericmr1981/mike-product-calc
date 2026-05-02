@@ -685,16 +685,16 @@ with tab4:
 _profit_df = sku_profit_table(wb.sheets, basis="factory", only_status=None)
 _all_skus = sorted(_profit_df["product_key"].dropna().unique().tolist())
 
-# SKU pool for production plan: 主原料 only (ice cream bases from 产品出品表)
-_out_sheet_names = [k for k in wb.sheets if k.startswith("产品出品表_")]
+# Production SKU pool: 产品配方表 + 半成品配方表 品名 (ice cream bases)
 _production_skus_list: list[str] = []
-for _sname in _out_sheet_names:
-    _df_out = wb.sheets[_sname]
-    if "主原料" in _df_out.columns:
-        for _v in _df_out["主原料"].dropna().unique():
-            _v_str = str(_v).strip()
-            if _v_str and _v_str.lower() not in ("nan", "") and _v_str not in _production_skus_list:
-                _production_skus_list.append(_v_str)
+for _sname in wb.sheets:
+    if "产品配方表" in _sname or "半成品配方表" in _sname:
+        _df = wb.sheets[_sname]
+        if "品名" in _df.columns:
+            for _v in _df["品名"].dropna().unique():
+                _v_str = str(_v).strip()
+                if _v_str and _v_str not in ("nan", "") and _v_str not in _production_skus_list:
+                    _production_skus_list.append(_v_str)
 _production_skus = sorted(_production_skus_list)
 
 
