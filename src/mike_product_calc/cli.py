@@ -38,22 +38,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from mike_product_calc.calc.capacity import score_capacity_from_plan
 from mike_product_calc.calc.margin_target import target_pricing
 from mike_product_calc.calc.material_sim import (
     MaterialPriceAdjustment,
     Scenario,
-    ScenarioStore,
     compare_scenarios,
-    get_builtin_scenarios,
     simulate_scenario,
 )
-from mike_product_calc.calc.optimizer import (
-    OptimizationConstraint,
-    enumerate_portfolios,
-    explain_recommendation,
-)
-from mike_product_calc.calc.prep_engine import bom_expand_multi, gaps_only
+from mike_product_calc.calc.prep_engine import bom_expand_multi
 from mike_product_calc.calc.profit import sku_profit_table
 from mike_product_calc.calc.profit_oracle import (
     ProfitOracleThresholds,
@@ -61,13 +53,6 @@ from mike_product_calc.calc.profit_oracle import (
     sku_profit_consistency_table,
 )
 from mike_product_calc.calc.purchase_suggestion import build_purchase_list
-from mike_product_calc.calc.scenarios import (
-    PortfolioScenario,
-    compare_portfolios,
-    evaluate_multi_scenario,
-    evaluate_portfolio,
-    multi_scenario_comparison_df,
-)
 from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.data.validator import issues_to_dataframe, issues_to_report, validate_workbook
 from mike_product_calc.model.production import ProductionPlan, ProductionRow
@@ -388,55 +373,6 @@ def cmd_sku_list(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_portfolio_eval(args: argparse.Namespace) -> int:
-    """Evaluate a portfolio (multi-SKU with quantities)."""
-    xlsx = _ensure_xlsx_from_args(args)
-    sheets = _load_sheets(xlsx)
-    sku_qty = _load_sku_qty_from_args(args)
-    scenario = PortfolioScenario.from_dict(args.name, sku_qty)
-    result = evaluate_portfolio(scenario, sheets, basis=args.basis)
-    if args.format == "json":
-        _dump_json({"cmd": "portfolio-eval", "xlsx": xlsx, "basis": args.basis, **asdict(result)}, out=args.out)
-        return 0
-    print(f"Scenario: {result.name} | Revenue: {result.total_revenue} | Cost: {result.total_cost} "
-          f"| Profit: {result.total_profit} | Margin: {result.total_margin} | SKUs: {result.sku_count}")
-    return 0
-
-
-def cmd_portfolio_compare(args: argparse.Namespace) -> int:
-    """Compare multiple scenarios (NAME=path.json)."""
-    xlsx = _ensure_xlsx_from_args(args)
-    sheets = _load_sheets(xlsx)
-    scenarios: List[PortfolioScenario] = []
-    for item in args.scenario_json or []:
-        s = str(item).strip()
-        if "=" not in s:
-            sys.stderr.write(f"Error: invalid --scenario-json '{item}'. Expected NAME=path.json\n")
-            raise SystemExit(1)
-        name, path = s.split("=", 1)
-        name, path = name.strip(), path.strip()
-        if not name:
-            sys.stderr.write("Error: --scenario-json: empty NAME\n")
-            raise SystemExit(1)
-        p = Path(path)
-        if not p.exists():
-            sys.stderr.write(f"Error: scenario json not found: {p}\n")
-            raise SystemExit(1)
-        data = json.loads(p.read_text(encoding="utf-8"))
-        if isinstance(data, dict) and "selections" in data:
-            data = data["selections"]
-        sku_qty = {str(k).strip(): float(v) for k, v in data.items() if str(k).strip()}
-        scenarios.append(PortfolioScenario.from_dict(name, sku_qty))
-    results = [evaluate_portfolio(s, sheets, basis=args.basis) for s in scenarios]
-    df = compare_portfolios(results)
-    if args.format == "json":
-        _dump_json({"cmd": "portfolio-compare", "xlsx": xlsx, "basis": args.basis,
-                    "rows": df.to_dict(orient="records")}, out=args.out)
-        return 0
-    print(df.to_string(index=False))
-    return 0
-
-
 def cmd_target_pricing(args: argparse.Namespace) -> int:
     """F-003: target-cost reverse pricing for a SKU."""
     xlsx = _ensure_xlsx_from_args(args)
@@ -547,63 +483,6 @@ def _build_scenario_from_args(args: argparse.Namespace, suffix: str, state: MpcS
     return adj
 
 
-def cmd_production_plan(args: argparse.Namespace) -> int:
-    """F-005: production plan import/export."""
-    xlsx = _ensure_xlsx_from_args(args)
-    sheets = _load_sheets(xlsx)
-    sub = args.subcommand
-
-    if sub == "export":
-        # Export named production plan to JSON
-        plan_name = args.name or "default"
-        store = get_store()
-        state = store.load("default")
-        if not state.last_portfolio_selections and not args.sku:
-            payload = {"cmd": "production-plan-export", "name": plan_name, "rows": []}
-        else:
-            sku_qty = _load_sku_qty_from_args(args) or state.last_portfolio_selections
-            rows_out = [{"sku_key": k, "qty": v} for k, v in sku_qty.items()]
-            payload = {"cmd": "production-plan-export", "name": plan_name, "rows": rows_out,
-                       "count": len(rows_out)}
-        _dump_json(payload, out=args.out)
-        return 0
-
-    if sub == "import":
-        # Import production plan from JSON file
-        plan_path = args.__dict__.get("plan-json") or getattr(args, "plan-json", None)
-        p = Path(plan_path)
-        if not p.exists():
-            sys.stderr.write(f"Error: plan JSON not found: {plan_path}\n")
-            raise SystemExit(1)
-        data = json.loads(p.read_text(encoding="utf-8"))
-        selections = data.get("selections", data) if isinstance(data, dict) else {}
-        sku_qty = {str(k).strip(): float(v) for k, v in selections.items() if str(k).strip()}
-        # Save to state
-        store = get_store()
-        state = store.load("default")
-        state.last_portfolio_selections = sku_qty
-        state.production_plan_name = data.get("name", args.name or "imported")
-        state.touch()
-        store.save(state)
-        payload = {"cmd": "production-plan-import", "name": state.production_plan_name,
-                   "count": len(sku_qty), "rows": [{"sku_key": k, "qty": v} for k, v in sku_qty.items()]}
-        _dump_json(payload, out=args.out)
-        return 0
-
-    if sub == "list":
-        # List all saved production plans from state
-        store = get_store()
-        state = store.load("default")
-        # Build a simple registry from state (stored plan names)
-        plans = [state.production_plan_name] if state.production_plan_name else []
-        payload = {"cmd": "production-plan-list", "plans": plans, "active": state.production_plan_name}
-        _dump_json(payload)
-        return 0
-
-    _dump_json({"cmd": "production-plan", "subcommands": ["export", "import", "list"]})
-    return 0
-
-
 def cmd_prep_plan(args: argparse.Namespace) -> int:
     """F-006: BOM expansion → material demand table."""
     xlsx = _ensure_xlsx_from_args(args)
@@ -664,46 +543,6 @@ def cmd_purchase_suggest(args: argparse.Namespace) -> int:
     if args.out and args.out.endswith(".csv"):
         _dump_csv(purchase_df[cols], out=args.out)
         return 0
-    _dump_json(payload, out=args.out)
-    return 0
-
-
-def cmd_optimizer(args: argparse.Namespace) -> int:
-    """F-012: SKU portfolio optimizer."""
-    xlsx = _ensure_xlsx_from_args(args)
-    sheets = _load_sheets(xlsx)
-    only_status = _parse_only_status(args.only_status)
-    profit_df = sku_profit_table(sheets, basis=args.basis, only_status=only_status)
-    if profit_df.empty:
-        _dump_json({"cmd": "optimizer", "xlsx": xlsx, "basis": args.basis,
-                     "recommendations": []})
-        return 0
-    # Filter to online SKUs with valid price/cost
-    pool = profit_df[profit_df["price"].notna() & profit_df["cost"].notna() &
-                     (profit_df["price"] > 0)].copy()
-    constraints = OptimizationConstraint(
-        max_capacity=int(args.max_capacity) if args.max_capacity else 200,
-        material_budget=float(args.material_budget) if args.material_budget else 50000.0,
-        min_sales_per_sku=int(args.min_sales) if args.min_sales else 1,
-    )
-    results = enumerate_portfolios(
-        pool, constraints,
-        max_qty_per_sku=int(args.max_qty_per_sku) if args.max_qty_per_sku else 20,
-        max_combos=int(args.max_combos) if args.max_combos else 200_000,
-        basis=args.basis,
-    )
-    recommendations = []
-    for scenario, result, feasible in results:
-        if result is None:
-            continue
-        recommendations.append({
-            "name": scenario.name,
-            "feasible": feasible,
-            **asdict(result),
-        })
-    payload = {"cmd": "optimizer", "xlsx": xlsx, "basis": args.basis,
-               "constraints": asdict(constraints), "count": len(recommendations),
-               "recommendations": recommendations}
     _dump_json(payload, out=args.out)
     return 0
 
@@ -973,26 +812,6 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--out", help="Write JSON to file")
     s.set_defaults(func=cmd_sku_list)
 
-    # ── portfolio-eval ─────────────────────────────────────────────────────────
-    pe = sub.add_parser("portfolio-eval", help="F-008: evaluate a portfolio")
-    pe.add_argument("xlsx", nargs="?", help="Path to xlsx")
-    pe.add_argument("--basis", choices=["factory", "store"], default="factory")
-    pe.add_argument("--name", default="A")
-    pe.add_argument("--sku", action="append", default=[], help="品类|品名|规格=qty")
-    pe.add_argument("--selections-json", help="JSON with selections")
-    pe.add_argument("--format", choices=["text", "json"], default="json")
-    pe.add_argument("--out", help="Write JSON to file")
-    pe.set_defaults(func=cmd_portfolio_eval)
-
-    # ── portfolio-compare ──────────────────────────────────────────────────────
-    pc = sub.add_parser("portfolio-compare", help="F-010: compare multiple scenarios")
-    pc.add_argument("xlsx", nargs="?", help="Path to xlsx")
-    pc.add_argument("--basis", choices=["factory", "store"], default="factory")
-    pc.add_argument("--scenario-json", action="append", default=[], help="NAME=path.json")
-    pc.add_argument("--format", choices=["text", "json"], default="json")
-    pc.add_argument("--out", help="Write JSON to file")
-    pc.set_defaults(func=cmd_portfolio_compare)
-
     # ── target-pricing ────────────────────────────────────────────────────────
     tp = sub.add_parser("target-pricing", help="F-003: target-cost reverse pricing")
     tp.add_argument("xlsx", nargs="?", help="Path to xlsx")
@@ -1031,29 +850,6 @@ def build_parser() -> argparse.ArgumentParser:
     ms_cmp.add_argument("--out", help="Write JSON to file")
     ms_cmp.set_defaults(func=cmd_material_sim)
 
-    # ── production-plan ───────────────────────────────────────────────────────
-    pp = sub.add_parser("production-plan", help="F-005: production plan import/export")
-    pp.add_argument("xlsx", nargs="?", help="Path to xlsx")
-    pp.set_defaults(func=lambda a: pp.print_help())
-    ppm = pp.add_subparsers(dest="subcommand")
-
-    pp_exp = ppm.add_parser("export", help="Export production plan to JSON")
-    pp_exp.add_argument("--name", default="A", help="Plan name")
-    pp_exp.add_argument("--sku", action="append", default=[], help="品类|品名|规格=qty")
-    pp_exp.add_argument("--selections-json", help="JSON file")
-    pp_exp.add_argument("--format", choices=["json"], default="json")
-    pp_exp.add_argument("--out", help="Write JSON to file")
-    pp_exp.set_defaults(func=cmd_production_plan)
-
-    pp_imp = ppm.add_parser("import", help="Import production plan from JSON")
-    pp_imp.add_argument("plan-json", help="Path to plan JSON file")
-    pp_imp.add_argument("--name", help="Plan name override")
-    pp_imp.add_argument("--out", help="Write JSON to file")
-    pp_imp.set_defaults(func=cmd_production_plan)
-
-    pp_lst = ppm.add_parser("list", help="List saved production plans")
-    pp_lst.set_defaults(func=cmd_production_plan)
-
     # ── prep-plan ─────────────────────────────────────────────────────────────
     pr = sub.add_parser("prep-plan", help="F-006: BOM expansion → material demand")
     pr.add_argument("xlsx", nargs="?", help="Path to xlsx")
@@ -1077,20 +873,6 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--format", choices=["json"], default="json")
     ps.add_argument("--out", help="Write JSON/CSV to file")
     ps.set_defaults(func=cmd_purchase_suggest)
-
-    # ── optimizer ─────────────────────────────────────────────────────────────
-    opt = sub.add_parser("optimizer", help="F-012: SKU portfolio optimizer")
-    opt.add_argument("xlsx", nargs="?", help="Path to xlsx")
-    opt.add_argument("--basis", choices=["factory", "store"], default="factory")
-    opt.add_argument("--only-status", default="上线")
-    opt.add_argument("--max-capacity", default="200")
-    opt.add_argument("--material-budget", default="50000")
-    opt.add_argument("--min-sales", default="1")
-    opt.add_argument("--max-qty-per-sku", default="20")
-    opt.add_argument("--max-combos", default="200000")
-    opt.add_argument("--format", choices=["json"], default="json")
-    opt.add_argument("--out", help="Write JSON to file")
-    opt.set_defaults(func=cmd_optimizer)
 
     # ── file ──────────────────────────────────────────────────────────────────
     f = sub.add_parser("file", help="File management: upload / list / select / delete / info")

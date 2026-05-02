@@ -25,17 +25,6 @@ def _run_cli(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, env=env, capture_output=True, text=True)
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────────
-
-def _first_sku() -> str:
-    """Return one real SKU key from the workbook."""
-    r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--only-status", "上线",
-                 "--limit", "1", "--format", "json")
-    assert r.returncode == 0, r.stderr
-    payload = json.loads(r.stdout)
-    return payload["rows"][0]["product_key"]
-
-
 # ── 1. State management ──────────────────────────────────────────────────────────
 
 def test_cli_state_init():
@@ -152,37 +141,13 @@ def test_cli_profit_oracle_json():
     assert "reports" in payload
 
 
-# ── 5. portfolio-eval ─────────────────────────────────────────────────────────
-
-def test_cli_portfolio_eval_json():
-    sku = _first_sku()
-    r = _run_cli("portfolio-eval", str(XLSX), "--basis", "factory", "--name", "A",
-                 "--sku", f"{sku}=10", "--format", "json")
-    assert r.returncode == 0, r.stderr
-    payload = json.loads(r.stdout)
-    assert payload["cmd"] == "portfolio-eval"
-    assert payload["name"] == "A"
-    assert payload["total_revenue"] >= 0
-
-
-# ── 6. portfolio-compare ───────────────────────────────────────────────────────
-
-def test_cli_portfolio_compare_json():
-    sku = _first_sku()
-    with TemporaryDirectory() as td:
-        plan_a = Path(td) / "plan_A.json"
-        plan_a.write_text(json.dumps({"selections": {sku: 5}}), encoding="utf-8")
-        r = _run_cli("portfolio-compare", str(XLSX), "--basis", "factory",
-                     "--scenario-json", f"A={plan_a}", "--format", "json")
-        assert r.returncode == 0, r.stderr
-        payload = json.loads(r.stdout)
-        assert payload["cmd"] == "portfolio-compare"
-
-
-# ── 7. target-pricing ─────────────────────────────────────────────────────────
+# ── 5. target-pricing ─────────────────────────────────────────────────────────
 
 def test_cli_target_pricing_json():
-    sku = _first_sku()
+    r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--only-status", "上线",
+                 "--limit", "1", "--format", "json")
+    assert r.returncode == 0, r.stderr
+    sku = json.loads(r.stdout)["rows"][0]["product_key"]
     r = _run_cli("target-pricing", str(XLSX), "--product-key", sku,
                  "--target-margin", "0.35", "--basis", "store", "--format", "json")
     assert r.returncode in (0, 1), r.stderr
@@ -192,7 +157,7 @@ def test_cli_target_pricing_json():
         assert "rows" in payload
 
 
-# ── 8. material-sim ────────────────────────────────────────────────────────────
+# ── 6. material-sim ────────────────────────────────────────────────────────────
 
 def test_cli_material_sim_versions():
     r = _run_cli("material-sim", str(XLSX), "versions")
@@ -222,46 +187,13 @@ def test_cli_material_sim_compare():
     assert payload["cmd"] == "material-sim-compare"
 
 
-# ── 9. production-plan ────────────────────────────────────────────────────────
-
-def test_cli_production_plan_export():
-    sku = _first_sku()
-    r = _run_cli("production-plan", str(XLSX), "export",
-                 "--name", "TestPlan", "--sku", f"{sku}=20",
-                 "--format", "json")
-    assert r.returncode == 0, r.stderr
-    payload = json.loads(r.stdout)
-    assert payload["cmd"] == "production-plan-export"
-
-
-def test_cli_production_plan_list():
-    r = _run_cli("production-plan", str(XLSX), "list")
-    assert r.returncode == 0, r.stderr
-    payload = json.loads(r.stdout)
-    assert payload["cmd"] == "production-plan-list"
-
-
-def test_cli_production_plan_import_export_cycle():
-    """Import a plan JSON, then export it — round-trip test."""
-    sku = _first_sku()
-    with TemporaryDirectory() as td:
-        plan_file = Path(td) / "imported_plan.json"
-        plan_file.write_text(json.dumps({"name": "Imported", "selections": {sku: 7}}),
-                             encoding="utf-8")
-        r1 = _run_cli("production-plan", str(XLSX), "import", str(plan_file))
-        assert r1.returncode == 0, r1.stderr
-
-        r2 = _run_cli("production-plan", str(XLSX), "export", "--name", "Imported",
-                      "--format", "json")
-        assert r2.returncode == 0, r2.stderr
-        payload = json.loads(r2.stdout)
-        assert payload["name"] == "Imported"
-
-
-# ── 10. prep-plan ─────────────────────────────────────────────────────────────
+# ── 7. prep-plan ─────────────────────────────────────────────────────────────
 
 def test_cli_prep_plan_json():
-    sku = _first_sku()
+    r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--only-status", "上线",
+                 "--limit", "1", "--format", "json")
+    assert r.returncode == 0, r.stderr
+    sku = json.loads(r.stdout)["rows"][0]["product_key"]
     r = _run_cli("prep-plan", str(XLSX), "--basis", "store",
                  "--sku", f"{sku}=5", "--lead-days", "3",
                  "--format", "json")
@@ -276,10 +208,13 @@ def test_cli_prep_plan_missing_sku():
     assert r.returncode == 1
 
 
-# ── 11. purchase-suggest ───────────────────────────────────────────────────────
+# ── 8. purchase-suggest ───────────────────────────────────────────────────────
 
 def test_cli_purchase_suggest_json():
-    sku = _first_sku()
+    r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--only-status", "上线",
+                 "--limit", "1", "--format", "json")
+    assert r.returncode == 0, r.stderr
+    sku = json.loads(r.stdout)["rows"][0]["product_key"]
     r = _run_cli("purchase-suggest", str(XLSX), "--basis", "store",
                  "--sku", f"{sku}=5", "--format", "json")
     assert r.returncode == 0, r.stderr
@@ -288,21 +223,7 @@ def test_cli_purchase_suggest_json():
     assert "rows" in payload
 
 
-# ── 12. optimizer ──────────────────────────────────────────────────────────────
-
-def test_cli_optimizer_json():
-    r = _run_cli("optimizer", str(XLSX), "--basis", "factory",
-                 "--only-status", "上线", "--max-capacity", "200",
-                 "--material-budget", "50000", "--min-sales", "1",
-                 "--max-qty-per-sku", "5", "--max-combos", "1000",
-                 "--format", "json")
-    assert r.returncode == 0, r.stderr
-    payload = json.loads(r.stdout)
-    assert payload["cmd"] == "optimizer"
-    assert "recommendations" in payload
-
-
-# ── 13. State auto-load ───────────────────────────────────────────────────────
+# ── 9. State auto-load ───────────────────────────────────────────────────────
 
 def test_cli_auto_load_state_xlsx():
     """Commands should auto-load xlsx from state when not provided."""
@@ -315,7 +236,7 @@ def test_cli_auto_load_state_xlsx():
     assert payload["count"] >= 1
 
 
-# ── 14. JSON output parseability ─────────────────────────────────────────────
+# ── 10. JSON output parseability ─────────────────────────────────────────────
 
 def test_cli_json_stderr_clean():
     """stdout must be pure JSON with no extra text."""
@@ -329,7 +250,7 @@ def test_cli_json_stderr_clean():
     assert "cmd" in parsed
 
 
-# ── 15. Exit code semantics ───────────────────────────────────────────────────
+# ── 11. Exit code semantics ───────────────────────────────────────────────────
 
 def test_cli_exit_code_2_on_validation_errors():
     """profit-oracle with strict thresholds should exit 2 when violations found."""
@@ -346,10 +267,9 @@ def test_cli_exit_code_2_on_validation_errors():
             assert r.returncode == 2
 
 
-# ── 16. --out flag ─────────────────────────────────────────────────────────────
+# ── 12. --out flag ─────────────────────────────────────────────────────────────
 
 def test_cli_out_flag_writes_file():
-    sku = _first_sku()
     with TemporaryDirectory() as td:
         out_file = Path(td) / "output.json"
         r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--limit", "3",
@@ -360,15 +280,15 @@ def test_cli_out_flag_writes_file():
         assert data["count"] >= 1
 
 
-# ── 17. help ──────────────────────────────────────────────────────────────────
+# ── 13. help ──────────────────────────────────────────────────────────────────
 
 def test_cli_help_smoke():
     r = _run_cli("--help")
     assert r.returncode == 0
     text = r.stdout + r.stderr
-    commands = ["validate", "sku-list", "profit-oracle", "portfolio-eval",
-                "portfolio-compare", "target-pricing", "material-sim",
-                "production-plan", "prep-plan", "purchase-suggest",
-                "optimizer", "state"]
+    commands = ["validate", "sku-list", "profit-oracle",
+                "target-pricing", "material-sim",
+                "prep-plan", "purchase-suggest",
+                "state"]
     for cmd in commands:
         assert cmd in text, f"'{cmd}' not found in --help output"
