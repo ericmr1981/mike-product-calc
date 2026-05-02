@@ -37,7 +37,6 @@ from mike_product_calc.calc.prep_engine import (
     gaps_only,
     sales_to_production,
 )
-from mike_product_calc.calc.purchase_suggestion import build_purchase_list
 from mike_product_calc.calc.profit import margin_delta_report, sku_cost_breakdown, sku_profit_table
 from mike_product_calc.calc.target_pricing import suggest_adjustable_item_costs
 from mike_product_calc.calc.scenarios import (
@@ -425,7 +424,7 @@ if "_mpc_state_synced" not in st.session_state:
     st.session_state["_mpc_state_synced"] = True
 
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(["概览/校验", "SKU 毛利分析（双口径）", "Sheet 浏览", "原料价格模拟器", "产销计划", "采购建议", "产品组合评估", "多场景对比", "选品优化器"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["概览/校验", "SKU 毛利分析（双口径）", "Sheet 浏览", "原料价格模拟器", "产销计划", "产品组合评估", "多场景对比", "选品优化器"])
 
 with tab1:
     st.info("📌 **功能说明**：上传 Excel 文件后，系统自动解析并校验所有 sheet。\n"
@@ -1104,213 +1103,7 @@ with tab5:
     else:
         st.info("👆 完成 Step 2 后，在上方设置参数并点击「展开 BOM」，查看原料需求与成本。")
 
-# ── Tab6: 采购建议 ─────────────────────────────────────────────────────
-
-
-with tab6:
-    st.info("📌 **功能说明**：基于产销计划的原料需求，生成采购建议清单（含紧急项标注）。\n"
-             "**使用方法**：选择生产计划场景和日期范围，点击「生成采购建议」。\n"
-             "**字段含义**：下单日期=最晚采购日；到货日期=原料到达日期；"
-             "is_urgent=已过期或今日需下单（红色高亮）；来源SKU=使用该原料的产品。")
-    st.subheader("采购建议")
-    st.caption("基于产销计划输出采购清单：下单日期、到货日期、原料、数量、单位、来源 SKU；红色标注最晚下单日（已过或今日）。")
-
-    _init_session()
-    plans: dict = st.session_state["production_plans"]
-
-    col_ps1, col_ps2, col_ps3, col_ps4, col_ps5 = st.columns([2, 2, 1, 1, 1])
-
-    with col_ps1:
-        ps_scenario_opts = [""] + list(plans.keys())
-        ps_selected_scenario = st.selectbox(
-            "选择场景", options=ps_scenario_opts, key="ps_scenario"
-        )
-
-    with col_ps2:
-        ps_plan_type_opts = ["all", "sales", "production"]
-        ps_plan_type_label = {"all": "全部", "sales": "销量计划", "production": "生产计划"}
-        ps_selected_type = st.selectbox(
-            "计划类型",
-            options=ps_plan_type_opts,
-            format_func=lambda x: ps_plan_type_label[x],
-            key="ps_plan_type",
-        )
-
-    with col_ps3:
-        ps_lead_days = st.number_input(
-            "提前期（天）", min_value=0, max_value=90, value=3, key="ps_lead_days"
-        )
-
-    with col_ps4:
-        ps_loss_rate = st.number_input(
-            "损耗率（%）",
-            min_value=0,
-            max_value=100,
-            value=0,
-            key="ps_loss_rate",
-        ) / 100.0
-
-    with col_ps5:
-        basis_opts = ["store", "factory"]
-        basis_label = {"store": "门店(加价后单价)", "factory": "出厂(加价前单价)"}
-        ps_basis = st.selectbox(
-            "单价口径",
-            options=basis_opts,
-            format_func=lambda x: basis_label[x],
-            key="ps_basis",
-        )
-
-    col_ps_date1, col_ps_date2, col_ps_date3 = st.columns([1, 1, 2])
-    with col_ps_date1:
-        ps_start_date = st.date_input("开始日期", value=None, key="ps_start")
-    with col_ps_date2:
-        ps_end_date = st.date_input("结束日期", value=None, key="ps_end")
-    with col_ps_date3:
-        st.write("")
-        st.write("")
-        run_ps = st.button("📋 生成采购建议", type="primary", use_container_width=True)
-
-    if run_ps:
-        if not ps_selected_scenario:
-            st.warning("请先选择一个已保存的场景（先在「产销计划」tab 中录入并保存计划）。")
-        else:
-            rows: List[ProductionRow] = plans.get(ps_selected_scenario, [])
-            if not rows:
-                st.info("该场景暂无数据。")
-            else:
-                # Filter by date range and plan type
-                ps_start_dt = ps_start_date
-                ps_end_dt   = ps_end_date
-
-                filtered = []
-                for r in rows:
-                    if ps_selected_type != "all" and r.plan_type != ps_selected_type:
-                        continue
-                    rdate = _parse_date(r.date)
-                    if rdate is None:
-                        filtered.append(r)
-                        continue
-                    if ps_start_dt and rdate < ps_start_dt:
-                        continue
-                    if ps_end_dt and rdate > ps_end_dt:
-                        continue
-                    filtered.append(r)
-
-                if not filtered:
-                    st.info("日期范围内无数据。")
-                else:
-                    # Build sku → plan_qty dict
-                    sku_qty: Dict[str, float] = {}
-                    for r in filtered:
-                        k = str(r.sku_key).strip()
-                        if k:
-                            sku_qty[k] = sku_qty.get(k, 0.0) + float(r.qty)
-
-                    target_date: Optional[date] = ps_end_dt
-
-                    with st.spinner("生成采购建议中…"):
-                        demand = bom_expand_multi(
-                            wb.sheets,
-                            sku_qty,
-                            order_date=target_date,
-                            basis=ps_basis,
-                            default_lead_days=ps_lead_days,
-                            default_loss_rate=ps_loss_rate,
-                            default_safety_stock=0.0,
-                        )
-
-                    if demand.empty:
-                        st.info("备料结果为空（选中的 SKU 在出品表中无配料数据）。")
-                    else:
-                        purchase_df = build_purchase_list(
-                            demand,
-                            order_date=target_date,
-                        )
-
-                        if purchase_df.empty:
-                            st.info("无原材料采购需求（全部为半成品）。")
-                        else:
-                            st.markdown("#### 采购建议清单")
-                            st.caption("⚠️ 红色 = 最晚下单日已过或今日，请优先处理")
-
-                            display_ps = purchase_df.copy()
-                            display_ps["qty"] = display_ps["qty"].round(2)
-                            display_ps["is_urgent_label"] = display_ps["is_urgent"].map(
-                                lambda x: "🚨 紧急" if x else "✅ 正常"
-                            )
-
-                            # Urgent-only filter
-                            show_urgent_only = st.checkbox(
-                                "仅显示紧急项", value=False, key="ps_urgent_only"
-                            )
-                            if show_urgent_only:
-                                display_ps = display_ps[display_ps["is_urgent"]]
-
-                            st.dataframe(
-                                display_ps[[
-                                    "order_date",
-                                    "arrival_date",
-                                    "material",
-                                    "qty",
-                                    "unit",
-                                    "source_skus",
-                                    "is_urgent_label",
-                                ]],
-                                use_container_width=True,
-                                height=520,
-                            )
-
-                            # Summary metrics
-                            col_pm1, col_pm2, col_pm3 = st.columns(3)
-                            col_pm1.metric("原料种类", len(purchase_df))
-                            col_pm2.metric(
-                                "总采购量",
-                                f"{purchase_df['qty'].sum():.2f}",
-                            )
-                            col_pm3.metric(
-                                "紧急项",
-                                int(purchase_df["is_urgent"].sum()),
-                            )
-
-                            st.divider()
-
-                            # CSV download
-                            csv_ps = purchase_df.to_csv(index=False).encode("utf-8-sig")
-                            st.download_button(
-                                "📥 下载采购建议 CSV",
-                                data=csv_ps,
-                                file_name="purchase_suggestion.csv",
-                                mime="text/csv",
-                            )
-
-                            # Highlighted urgent table (Streamlit native coloring)
-                            urgent_df = purchase_df[purchase_df["is_urgent"]].copy()
-                            if not urgent_df.empty:
-                                st.markdown("#### 🚨 紧急采购项")
-                                st.dataframe(
-                                    urgent_df[[
-                                        "order_date",
-                                        "arrival_date",
-                                        "material",
-                                        "qty",
-                                        "unit",
-                                        "source_skus",
-                                    ]],
-                                    use_container_width=True,
-                                    height=300,
-                                )
-    else:
-        st.divider()
-        st.info(
-            "👆 在上方选择场景和日期范围，点击「生成采购建议」开始。\n\n"
-            "提示：\n"
-            "• 红色标注的行表示最晚下单日已过，请优先处理\n"
-            "• 采购建议基于产销计划展开（仅原材料，不含半成品）\n"
-            "• 「展开 BOM」tab 可查看详细备料数据"
-        )
-
-
-# ── Tab7: 产品组合评估 ─────────────────────────────────────────────────
+# ── Tab6: 产品组合评估 ─────────────────────────────────────────────────
 
 # Build SKU list once
 _all_skus_for_portfolio = sorted(_profit_df["product_key"].dropna().unique().tolist())
@@ -1323,7 +1116,7 @@ def _init_portfolio_session():
             st.session_state[slot] = {}  # {sku_key: qty}
 
 
-with tab7:
+with tab6:
     st.info("📌 **功能说明**：多选产品+填数量，实时计算总销售额/成本/毛利/净利/原料种类/产能压力。\n"
              "**使用方法**：multiselect 选 SKU → 填数量 → 切换口径 → 实时查看 KPI；保存方案 A/B/C 后可对比。\n"
              "**字段含义**：Revenue=定价×数量；Gross_profit=毛利额；Capacity_pressure=产能压力评分（0-100）；"
@@ -1502,7 +1295,7 @@ with tab7:
         )
 
 
-# ── Tab8: 多场景对比 ─────────────────────────────────────────────────
+# ── Tab7: 多场景对比 ─────────────────────────────────────────────────
 
 
 def _init_multi_scenario_session():
@@ -1510,7 +1303,7 @@ def _init_multi_scenario_session():
         st.session_state["ms_scenarios"] = {}  # name -> dict of {sku_key: qty}
 
 
-with tab8:
+with tab7:
     st.info("📌 **功能说明**：创建多组销量假设（A/B/C），对比各方案下的总利润、原料需求、SKU 变动。\n"
              "**使用方法**：新建多个场景并填入 SKU 数量 → 点击「对比场景」→ 查看汇总表+差异表。\n"
              "**字段含义**：total_profit=该方案净利润；material_qty=总原料需求量；"
@@ -1714,10 +1507,10 @@ with tab8:
         )
 
 
-# ── Tab9: 选品优化器 ─────────────────────────────────────────────────
+# ── Tab8: 选品优化器 ─────────────────────────────────────────────────
 
 
-with tab9:
+with tab8:
     st.info("📌 **功能说明**：在给定约束（产能/预算/销量下限）下，枚举所有可行 SKU 组合，返回利润 Top-3 并给出推荐理由。\n"
              "**使用方法**：选择候选 SKU 池 → 设置约束条件 → 点击「运行优化」→ 查看推荐方案。\n"
              "**字段含义**：max_capacity=单品总件数上限；material_budget=原料采购总预算（元）；"
