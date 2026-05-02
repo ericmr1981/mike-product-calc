@@ -324,6 +324,19 @@ def _get_material_info(
 # Core BOM expansion
 # -------------------------------------------------------------------------------------------------
 
+def _build_recipe_by_name(recipe_index: Dict[Tuple[str, str], dict]) -> Dict[str, dict]:
+    """Build a flat name→recipe lookup from the (cat,name) indexed recipe_index.
+
+    Used when a sku_key is a recipe item name (e.g. "榛子巧克力布朗尼 2.0")
+    rather than a product key (e.g. "Gelato|榛子巧克力布朗尼|小杯").
+    """
+    by_name: Dict[str, dict] = {}
+    for (cat, name), info in recipe_index.items():
+        if name not in by_name:
+            by_name[name] = info
+    return by_name
+
+
 def _collect_bom_entries(
     sheets: Dict[str, pd.DataFrame],
     sku_key: str,
@@ -332,8 +345,13 @@ def _collect_bom_entries(
 ) -> List[BomEntry]:
     """Collect BOM entries for a SKU (2-level recipe model).
 
-    Level 1: 产品出品表_* (主原料/配料 + 用量)
-    Level 2: 配方表_* / 半成品配方表_* (品类, 品名) → 配料
+    Two entry paths:
+      Path A — sku_key is a product key (品类|品名|规格):
+        Level 1: 产品出品表_* (主原料/配料 + 用量)
+        Level 2: 配方表_* / 半成品配方表_* (品类, 品名) → 配料
+
+      Path B — sku_key is a recipe item name (e.g. "榛子巧克力布朗尼 2.0"):
+        Direct lookup in 产品配方表 → raw ingredients (level 2)
 
     For raw-material statistics, we keep only leaf ingredients:
     if an item is expandable (has a recipe), the intermediate item itself
@@ -343,86 +361,85 @@ def _collect_bom_entries(
       SKU consumes X of item (same unit as recipe 用量)
       recipe total denom = sum(用量)
       ingredient demand = X * (ingredient_qty / denom)
-
-    This intentionally supports *two levels* (per requirement).
     """
 
     entries: List[BomEntry] = []
 
     key_info = sku_key_to_sheet.get(sku_key)
-    if key_info is None:
-        return entries
+    if key_info is not None:
+        # ── Path A: product key (品类|品名|规格) ──
+        df, keys, sheet_name = key_info
+        part = df.loc[keys == sku_key].copy()
+        if part.empty:
+            return entries
 
-    df, keys, sheet_name = key_info
-    part = df.loc[keys == sku_key].copy()
-    if part.empty:
-        return entries
+        sku_category = str(sku_key).split("|")[0].strip() if "|" in str(sku_key) else ""
+        qty_col = "用量"
+        if qty_col not in part.columns:
+            return entries
 
-    sku_category = str(sku_key).split("|")[0].strip() if "|" in str(sku_key) else ""
-
-    qty_col = "用量"
-    if qty_col not in part.columns:
-        return entries
-
-    # Each row has either 主原料 or 配料
-    for _, row in part.iterrows():
-        mm = str(row.get("主原料", "") or "").strip()
-        ing = str(row.get("配料", "") or "").strip()
-        item = ing or mm
-        if not item:
-            continue
-
-        raw_qty = to_float(row.get(qty_col))
-        qty = float(raw_qty) if raw_qty is not None and raw_qty > 0 else 0.0
-        if qty <= 0:
-            continue
-
-        rkey = (sku_category, item)
-        recipe = recipe_index.get(rkey)
-        if recipe is not None:
-            denom = float(recipe.get("denom") or 0.0)
-            if denom > 0:
-                scale = qty / denom
-                for ing_name, ing_qty in recipe.get("rows", []):
-                    iname = str(ing_name).strip()
-                    if not iname:
-                        continue
-                    q = float(ing_qty) * scale
-                    if q <= 0:
-                        continue
-                    entries.append(
-                        BomEntry(
-                            sku_key=sku_key,
-                            material=iname,
-                            level=2,
-                            qty_per_unit=q,
-                            unit="",
-                            loss_rate=0.0,
-                            safety_stock=0.0,
-                            min_purchase=0.0,
-                            lead_days=0,
-                            is_semi_finished=False,
-                            source_sheet=f"{sheet_name}→{recipe.get('sheet','')}",
-                        )
-                    )
+        for _, row in part.iterrows():
+            mm = str(row.get("主原料", "") or "").strip()
+            ing = str(row.get("配料", "") or "").strip()
+            item = ing or mm
+            if not item:
+                continue
+            raw_qty = to_float(row.get(qty_col))
+            qty = float(raw_qty) if raw_qty is not None and raw_qty > 0 else 0.0
+            if qty <= 0:
                 continue
 
-        # Leaf item
-        entries.append(
-            BomEntry(
-                sku_key=sku_key,
-                material=item,
-                level=1,
-                qty_per_unit=qty,
-                unit="",
-                loss_rate=0.0,
-                safety_stock=0.0,
-                min_purchase=0.0,
-                lead_days=0,
+            rkey = (sku_category, item)
+            recipe = recipe_index.get(rkey)
+            if recipe is not None:
+                denom = float(recipe.get("denom") or 0.0)
+                if denom > 0:
+                    scale = qty / denom
+                    for ing_name, ing_qty in recipe.get("rows", []):
+                        iname = str(ing_name).strip()
+                        if not iname:
+                            continue
+                        q = float(ing_qty) * scale
+                        if q <= 0:
+                            continue
+                        entries.append(BomEntry(
+                            sku_key=sku_key, material=iname, level=2,
+                            qty_per_unit=q, unit="",
+                            loss_rate=0.0, safety_stock=0.0, min_purchase=0.0, lead_days=0,
+                            is_semi_finished=False,
+                            source_sheet=f"{sheet_name}→{recipe.get('sheet','')}",
+                        ))
+                    continue
+            # Leaf item
+            entries.append(BomEntry(
+                sku_key=sku_key, material=item, level=1, qty_per_unit=qty,
+                unit="", loss_rate=0.0, safety_stock=0.0, min_purchase=0.0, lead_days=0,
+                is_semi_finished=False, source_sheet=sheet_name,
+            ))
+    else:
+        # ── Path B: recipe item name (e.g. "榛子巧克力布朗尼 2.0") ──
+        recipe_by_name = _build_recipe_by_name(recipe_index)
+        recipe = recipe_by_name.get(sku_key)
+        if recipe is None:
+            return entries
+        denom = float(recipe.get("denom") or 0.0)
+        if denom <= 0:
+            return entries
+        # Each recipe "unit" = 1 batch. Plan qty is in batches.
+        # Ingredient qty = plan_qty × (ingredient用量 / recipe总用量)
+        for ing_name, ing_qty in recipe.get("rows", []):
+            iname = str(ing_name).strip()
+            if not iname:
+                continue
+            # qty_per_unit = ing_qty / denom (fraction of batch per unit of production plan)
+            entries.append(BomEntry(
+                sku_key=sku_key, material=iname,
+                level=2, qty_per_unit=float(ing_qty) / denom,
+                unit="", loss_rate=0.0, safety_stock=0.0,
+                min_purchase=0.0, lead_days=0,
                 is_semi_finished=False,
-                source_sheet=sheet_name,
-            )
-        )
+                source_sheet=str(recipe.get("sheet", "")),
+            ))
 
     return entries
 
