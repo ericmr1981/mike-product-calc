@@ -562,112 +562,213 @@ with tab3:
     st.write(f"Rows: {df.shape[0]} | Cols: {df.shape[1]}")
     st.dataframe(df.head(200), use_container_width=True, height=420)
 
-# ── Tab4: 原料价格模拟器 ───────────────────────────────────────────────
+# ── Tab4: 原料价格模拟器（重设计）────────────────────────────────
 
 store: ScenarioStore = st.session_state["sim_store"]
 
 with tab4:
-    st.info("📌 **功能说明**：调整原料单价，实时预览毛利变化，保存调价版本并与基准对比。\n"
-             "**使用方法**：选择或新建版本 → 添加调价原料+新单价 → 保存 → 与其他版本对比。\n"
-             "**字段含义**：原料=来自总原料成本表；新单价=调整后的采购价；"
-             "高风险=SKU 调整后毛利<0（标红）。")
-    st.subheader("原料价格模拟器（F-004）")
-    st.caption("调整原料单价 → 实时重算毛利 → 保存版本 → 对比任意两版本差异")
+    st.info("功能说明：选产品 → 查看 SKU 规格毛利 → 展开配方明细，调整门店价格/售价，实时看毛利变化。\n"
+             "使用方法：选择产品 → 选 SKU 规格 → 在配方表中调整门店价格或在右侧调售价 → 保存方案对比。")
+    st.subheader("原料价格模拟器")
+    st.caption("三步递进：选择产品 → SKU 规格毛利 → 配方明细与调价")
 
-    # ── Version management ──────────────────────────────────────────
-    existing = store.list_names()
-    default_choice = "（新建版本）"
-    choice = st.selectbox("选择版本", [default_choice] + existing)
-    version_name = st.text_input("新版本名称").strip() if choice == default_choice else choice
+    # ── Step 1: Select product ──────────────────────────────────────
+    profit_df_t4 = sku_profit_table(wb.sheets, basis="store", only_status=None)
+    if profit_df_t4.empty:
+        st.warning("无可用毛利数据。")
+        st.stop()
 
-    current = store.get(version_name) if version_name else None
-    adj_items = [(a.item, a.new_unit_price) for a in current.adjustments] if current else []
+    # Extract product-level keys (品类|品名)
+    all_pks = profit_df_t4["product_key"].dropna().unique().tolist()
+    product_options = sorted(set("|".join(pk.split("|")[:2]) for pk in all_pks if "|" in pk))
 
-    # Build ingredient list
-    raw_df = wb.sheets.get("总原料成本表")
-    price_col = next((c for c in raw_df.columns if "单价" in c), None) if raw_df is not None else None
-    name_col = next((c for c in raw_df.columns if "品项名称" in c), None) if raw_df is not None else None
-    ingredient_options = (
-        sorted({str(r.get(name_col, "")).strip() for *_, r in raw_df.iterrows() if str(r.get(name_col, "")).strip()})
-        if raw_df is not None and price_col and name_col else []
+    col_prod, col_basis_t4 = st.columns([3, 1])
+    with col_prod:
+        selected_product = st.selectbox(
+            "选择产品",
+            options=product_options,
+        )
+    with col_basis_t4:
+        basis_t4 = st.radio(
+            "口径",
+            options=["factory", "store"],
+            format_func=lambda x: "出厂口径" if x == "factory" else "门店口径",
+            horizontal=True,
+        )
+
+    if not selected_product:
+        st.info("请在上方选择一个产品。")
+        st.stop()
+
+    # ── Step 2: SKU specs table ────────────────────────────────────
+    skus_for_product = [
+        pk for pk in all_pks
+        if pk.startswith(selected_product + "|")
+    ]
+    sku_df = profit_df_t4[profit_df_t4["product_key"].isin(skus_for_product)].copy()
+
+    if sku_df.empty:
+        st.info("该产品下没有找到 SKU 数据。")
+        st.stop()
+
+    st.divider()
+    st.markdown(f"##### {selected_product} — SKU 规格列表")
+
+    display_t4 = sku_df.copy()
+    display_t4["gross_margin_pct"] = display_t4["gross_margin"].apply(
+        lambda x: f"{x*100:.1f}%" if pd.notna(x) else "N/A"
     )
 
-    # ── Adjustment editor ────────────────────────────────────────────
-    st.markdown("##### 调价明细")
-    n = st.number_input("调价原料数", min_value=0, max_value=20, value=len(adj_items), step=1)
-    adjustments: List[MaterialPriceAdjustment] = []
-    for i in range(int(n)):
-        col1, col2 = st.columns([3, 1])
-        item_name = col1.selectbox(
-            f"原料 #{i+1}", options=ingredient_options,
-            index=ingredient_options.index(adj_items[i][0]) if i < len(adj_items) and adj_items[i][0] in ingredient_options else 0,
-        )
-        new_price = col2.number_input("新单价", value=adj_items[i][1] if i < len(adj_items) else 0.0, step=0.01, format="%.4f", key=f"sim_price_{i}")
-        if item_name and new_price > 0:
-            adjustments.append(MaterialPriceAdjustment(item=item_name, new_unit_price=new_price))
+    # SKU selector
+    sku_options = display_t4["product_key"].tolist()
+    selected_sku = st.selectbox(
+        "选择 SKU 查看配方",
+        options=sku_options,
+        format_func=lambda pk: pk.split("|")[-1] if "|" in pk else pk,
+    )
 
-    sim_basis = st.radio("口径", ["store", "factory"], format_func=lambda x: "门店口径" if x == "store" else "出厂口径", horizontal=True)
+    # Show the basic SKU table
+    st.dataframe(
+        display_t4,
+        use_container_width=True,
+        height=200,
+        column_config={
+            "product_key": "SKU",
+            "price": st.column_config.NumberColumn("定价", format="%.2f"),
+            "cost": st.column_config.NumberColumn("成本", format="%.4f"),
+            "gross_profit": st.column_config.NumberColumn("毛利", format="%.2f"),
+            "gross_margin_pct": "毛利率",
+        },
+    )
 
-    # Save / clear
-    col_save, col_clear, col_clear2 = st.columns([1, 1, 2])
-    with col_save:
-        save_disabled = not (version_name and adjustments)
-        save_label = "💾 保存"
-        if version_name and version_name in existing and choice != default_choice:
-            save_label = "⚠️ 覆盖保存"
-        if col_save.button(save_label, disabled=save_disabled):
-            store.put(Scenario(name=version_name, adjustments=tuple(adjustments)))
-            st.success(f"已保存版本：{version_name}")
-            _auto_save()
-            st.rerun()
-    with col_clear:
-        confirm_clear = st.checkbox("确认清空？", value=False, key="clear_confirm_chk")
-    with col_clear2:
-        if col_clear2.button("🗑 清空所有版本", disabled=not (confirm_clear and existing)):
-            store.clear()
-            st.success("已清空所有版本")
-            st.rerun()
-
-    # ── Comparison ──────────────────────────────────────────────────
+    # ── Step 3: Recipe detail + pricing ─────────────────────────────
     st.divider()
-    st.markdown("##### 版本对比")
-    names = store.list_names()
-    if len(names) >= 2:
-        c_a, c_b = st.columns(2)
-        with c_a:
-            va = st.selectbox("版本 A", names, key="cmp_a")
-        with c_b:
-            vb = st.selectbox("版本 B", names, index=min(1, len(names)-1), key="cmp_b")
-        compare_disabled = va == vb
-        if compare_disabled:
-            st.info("请选择两个不同的版本进行对比")
-        if st.button("🔍 对比两版本", disabled=compare_disabled):
-            s_a, s_b = store.get(va), store.get(vb)
-            if s_a and s_b:
-                diff = compare_scenarios(s_a, s_b, wb.sheets, basis=sim_basis)
-                st.dataframe(diff, use_container_width=True, height=420)
-                st.download_button(f"下载 {va}_vs_{vb}.csv", data=diff.to_csv(index=False).encode("utf-8"),
-                                   file_name=f"sim_{va}_vs_{vb}.csv", mime="text/csv")
-    elif len(names) == 1:
-        s1 = store.get(names[0])
-        if s1:
-            st.markdown(f"**{names[0]}** vs 基准（原始数据）")
-            diff = compare_scenarios(Scenario(name="基准", adjustments=()), s1, wb.sheets, basis=sim_basis)
-            st.dataframe(diff, use_container_width=True, height=420)
-            st.download_button(f"下载 {names[0]}_vs_baseline.csv", data=diff.to_csv(index=False).encode("utf-8"),
-                               file_name=f"sim_{names[0]}_vs_baseline.csv", mime="text/csv")
+    st.markdown(f"##### 配方明细 — {selected_sku.split('|')[-1] if '|' in selected_sku else selected_sku}")
+
+    # Build recipe table
+    recipe_df = build_recipe_table(wb.sheets, product_key=selected_sku, basis=basis_t4)
+
+    if recipe_df.empty:
+        st.info("暂无配方明细数据。")
     else:
-        st.info("保存至少一个版本后即可进行对比分析。")
+        # Editable store_price column using data_editor
+        editor_cols = ["item", "usage_qty", "cost", "spec", "store_price", "brand_cost", "profit_rate"]
+        editor_df = recipe_df[editor_cols].copy() if all(c in recipe_df.columns for c in editor_cols) else recipe_df
 
-    # List saved versions
-    if names:
+        edited = st.data_editor(
+            editor_df,
+            use_container_width=True,
+            height=400,
+            column_config={
+                "item": st.column_config.TextColumn("项目", disabled=True),
+                "usage_qty": st.column_config.NumberColumn("用量", disabled=True, format="%.3f"),
+                "cost": st.column_config.NumberColumn("成本", disabled=True, format="%.4f"),
+                "spec": st.column_config.TextColumn("规格", disabled=True),
+                "store_price": st.column_config.NumberColumn("门店价格", format="%.2f"),
+                "brand_cost": st.column_config.NumberColumn("品牌成本", disabled=True, format="%.2f"),
+                "profit_rate": st.column_config.NumberColumn("利润率", disabled=True, format="%.2f"),
+            },
+        )
+
+        # Recalculate costs based on edited store_price
+        total_cost = 0.0
+        recalc_data = edited.to_dict("records")
+        for row in recalc_data:
+            # Skip semi-product summary rows (level=1 = is_semi rows) — costs are sum of sub-items
+            if row.get("is_semi", False):
+                continue
+            sp = row.get("store_price")
+            bc = row.get("brand_cost", 0) or 0
+            spec_str = str(row.get("spec", "") or "").strip()
+            uq = row.get("usage_qty", 0) or 0
+
+            try:
+                sp_f = float(sp) if sp is not None else 0
+                uq_f = float(uq)
+                bc_f = float(bc)
+            except (TypeError, ValueError):
+                continue
+
+            # Parse spec — use _parse_spec from recipe module
+            from mike_product_calc.calc.recipe import _parse_spec, _calc_profit_rate
+            spec_val = _parse_spec(spec_str)
+
+            calculated_cost = 0.0
+            if spec_val and spec_val > 0 and uq_f > 0 and sp_f > 0:
+                calculated_cost = uq_f * (sp_f / spec_val)
+
+            row["cost"] = round(calculated_cost, 4)
+            row["profit_rate"] = round(_calc_profit_rate(sp_f, bc_f), 4)
+            total_cost += calculated_cost
+
+        # ── Pricing & margin KPI cards ──────────────────────────────
+        default_price = float(sku_df[sku_df["product_key"] == selected_sku]["price"].iloc[0]) if not sku_df[sku_df["product_key"] == selected_sku].empty else 0.0
+        price_key = f"t4_sku_price_{selected_sku}"
+        current_price = st.session_state.get(price_key, default_price)
+
+        col_p1, col_p2, col_p3 = st.columns(3)
+        with col_p1:
+            new_price = st.number_input("门店售价（元）", value=float(current_price), step=1.0, min_value=0.0, key=f"t4_price_{selected_sku}")
+            st.session_state[price_key] = new_price
+        with col_p2:
+            gross_profit = new_price - total_cost
+            st.metric("总成本（元）", f"{total_cost:.2f}")
+        with col_p3:
+            margin_rate = (gross_profit / new_price * 100) if new_price > 0 else 0
+            st.metric("毛利", f"{gross_profit:.2f} 元", delta=f"{margin_rate:.1f}%")
+
+        # ── Scenario management ──────────────────────────────────────
         st.divider()
-        st.markdown("##### 已保存版本")
-        for nm in names:
-            sc = store.get(nm)
-            adj_list = [f"{a.item} → {a.new_unit_price}" for a in (sc.adjustments if sc else [])]
-            st.markdown(f"**{nm}**（{len(adj_list)} 项调价）：{', '.join(adj_list) if adj_list else '（无调整）'}")
+        st.markdown("##### 方案管理")
 
+        col_save_nm, col_save_btn = st.columns([3, 1])
+        with col_save_nm:
+            scenario_name = st.text_input("方案名称", placeholder="输入名称后保存", key="t4_scenario_name")
+        with col_save_btn:
+            st.write("")
+            st.write("")
+            if st.button("保存方案", use_container_width=True):
+                adjustments = []
+                for row in recalc_data:
+                    if row.get("is_semi", False):
+                        continue
+                    sp = row.get("store_price")
+                    name = str(row.get("item", "")).strip()
+                    if name and sp is not None:
+                        try:
+                            sp_f = float(sp)
+                            if sp_f > 0:
+                                adjustments.append(MaterialPriceAdjustment(item=name, new_unit_price=sp_f))
+                        except (TypeError, ValueError):
+                            pass
+                if scenario_name and adjustments:
+                    store.put(Scenario(name=scenario_name, adjustments=tuple(adjustments)))
+                    st.success(f"方案「{scenario_name}」已保存")
+                    _auto_save()
+                    st.rerun()
+
+        # Saved scenarios
+        names = store.list_names()
+        if names:
+            st.markdown("##### 已保存方案")
+            for nm in names:
+                sc = store.get(nm)
+                adj_list = [f"{a.item} → {a.new_unit_price}" for a in (sc.adjustments if sc else [])]
+                st.markdown(f"**{nm}**（{len(adj_list)} 项调价）：{', '.join(adj_list) if adj_list else '（无调整）'}")
+
+            if len(names) >= 2:
+                st.divider()
+                st.markdown("##### 方案对比")
+                c_a, c_b = st.columns(2)
+                with c_a:
+                    va = st.selectbox("方案 A", names, key="t4_cmp_a")
+                with c_b:
+                    vb = st.selectbox("方案 B", names, index=min(1, len(names)-1), key="t4_cmp_b")
+                if va != vb and st.button("对比"):
+                    s_a, s_b = store.get(va), store.get(vb)
+                    if s_a and s_b:
+                        diff = compare_scenarios(s_a, s_b, wb.sheets, basis=basis_t4)
+                        st.dataframe(diff, use_container_width=True, height=420)
 # ── Tab5: 产销计划 ────────────────────────────────────────────────────
 
 # Build SKU list from workbook for dropdown
