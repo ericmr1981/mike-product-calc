@@ -758,7 +758,7 @@ with tab5:
         reset_sales = st.button("🔄 重置销售计划", use_container_width=True, key="reset_sales")
 
     # CSV upload: sales
-    csv_sales = st.file_uploader("📤 上传销售计划（CSV / Excel）", type=None, key="csv_sales")
+    csv_sales = st.file_uploader("📤 上传销售计划（CSV / Excel）", type=[".csv", ".xlsx"], key="csv_sales")
     if csv_sales:
         _sid = f"{csv_sales.name}_{csv_sales.size}"
         if st.session_state.get("_csv_sales_id") != _sid:
