@@ -730,16 +730,16 @@ def sales_to_production(
 ) -> List["ProductionRow"]:
     """
     Convert sales plan rows to production plan rows by expanding each sales SKU
-    through the 产品出品表 recipe.
+    through the 产品出品表 recipe, then dividing by the batch weight from
+    产品成本计算表.
 
     For each sales row (finished product SKU, qty, date):
       1. Extract category from SKU key (format: 品类|品名|规格)
-      2. Look up 产品出品表_{category} sheet
-      3. Find recipe rows matching the SKU's 品名+规格
-      4. Collect 主原料 + 配料 as production items
-      5. production_qty = sales_qty × recipe 用量
-      6. production_date = sales_date - lead_days
-      7. Aggregate same production items on same dates
+      2. Look up 产品出品表_{category} sheet — find 主原料 + 用量 per unit
+      3. Look up 产品成本计算表_{category} sheet — find 规格 (batch weight in g)
+      4. production_qty = (sales_qty × 用量) / 规格  ← batches to produce
+      5. production_date = sales_date - lead_days
+      6. Aggregate same production items on same dates
 
     Returns a list of ProductionRow with plan_type="production".
     """
@@ -748,8 +748,18 @@ def sales_to_production(
     if not sales_rows or not sheets:
         return []
 
-    # Group sales rows by category for efficient sheet access
-    # SKU key format: 品类|品名|规格
+    # Build batch-weight lookup: material_name → batch_weight (from 产品成本计算表)
+    batch_specs: Dict[str, float] = {}
+    for sname in sheets:
+        if "产品成本计算表" in sname:
+            df = sheets[sname]
+            if "品名" in df.columns and "规格" in df.columns:
+                for _, row in df.iterrows():
+                    name = str(row.get("品名", "")).strip()
+                    spec = to_float(row.get("规格"))
+                    if name and name not in batch_specs and spec and spec > 0:
+                        batch_specs[name] = spec
+
     out_rows: Dict[tuple, float] = {}  # (date, sku_key, spec) -> qty
 
     for row in sales_rows:
@@ -771,27 +781,21 @@ def sales_to_production(
         if sheet_name is None:
             continue
 
-        df = sheets[sheet_name]
-        df = df.reset_index(drop=True)
-
-        # Build product keys for this sheet
+        df = sheets[sheet_name].reset_index(drop=True)
         if "品类" not in df.columns or "品名" not in df.columns:
             continue
         sheet_keys = build_product_key(df)
 
-        # Find matching rows: match 品类|品名|规格
         target_key = f"{category}|{product_name}|{spec}" if spec else f"{category}|{product_name}"
         match_mask = sheet_keys == target_key
-
         if not match_mask.any():
-            # Try matching by just 品名
             match_mask = df["品名"].fillna("").astype(str).str.strip() == product_name
 
         recipe_rows = df[match_mask]
         if recipe_rows.empty:
             continue
 
-        # Calculate date
+        # Date
         try:
             sales_date = date.fromisoformat(row.date)
         except Exception:
@@ -802,15 +806,28 @@ def sales_to_production(
         prod_date = sales_date - timedelta(days=lead_days)
         prod_date_str = prod_date.strftime("%Y-%m-%d")
 
-        # For each recipe row, create a production item (主原料 only = ice cream bases)
+        # For each recipe row (main material only = ice cream bases)
         for _, recipe_row in recipe_rows.iterrows():
             main_material = str(recipe_row.get("主原料", "")).strip()
-            if main_material and main_material.lower() not in ("nan", ""):
-                qty_usage = to_float(recipe_row.get("用量"))
-                if qty_usage is not None and qty_usage > 0:
-                    prod_qty = row.qty * qty_usage
-                    key = (prod_date_str, main_material, "")
-                    out_rows[key] = out_rows.get(key, 0) + prod_qty
+            if not main_material or main_material.lower() in ("nan", ""):
+                continue
+            qty_usage = to_float(recipe_row.get("用量"))
+            if qty_usage is None or qty_usage <= 0:
+                continue
+
+            # Total grams needed = sales qty × recipe usage per unit
+            total_grams = row.qty * qty_usage
+
+            # Get batch weight from 产品成本计算表
+            batch_weight = batch_specs.get(main_material)
+            if batch_weight and batch_weight > 0:
+                prod_qty = total_grams / batch_weight
+            else:
+                # Fallback: return raw grams if no batch spec
+                prod_qty = total_grams
+
+            key = (prod_date_str, main_material, "")
+            out_rows[key] = out_rows.get(key, 0) + prod_qty
 
     result = sorted(
         [
