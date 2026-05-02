@@ -869,6 +869,22 @@ def sales_to_production(
                 key = (prod_date_str, ing_name)
                 out_rows[key] = out_rows.get(key, 0) + ingredient_grams
 
+        # Also include 配料 (packaging/consumables) from 产品出品表
+        for _, out_row in output_rows.iterrows():
+            ingredient = str(out_row.get("配料", "")).strip()
+            if not ingredient or ingredient.lower() in ("nan", ""):
+                continue
+            # Skip if this ingredient was already processed as 主原料
+            if ingredient == str(out_row.get("主原料", "")).strip():
+                continue
+            usage = to_float(out_row.get("用量"))
+            if usage is None or usage <= 0:
+                continue
+            # 配料 qty = sales_qty × 用量 (unit-based: 个/杯/份)
+            ing_qty = row.qty * usage
+            key = (prod_date_str, ingredient)
+            out_rows[key] = out_rows.get(key, 0) + ing_qty
+
     result = sorted(
         [
             ProductionRow(date=d, sku_key=k, spec="", qty=round(q, 2), plan_type="production")
