@@ -300,21 +300,22 @@ def _get_material_info(
     """
     row = catalog[catalog["name"] == material_name]
     if row.empty:
-        return None, None, None, None, False, "原料未在总原料成本表中登记"
+        # Not in catalog — default to price=0 (辅料如水、盐无采购成本)
+        return 0.0, "", None, None, True, ""
 
     r = row.iloc[0]
-    unit_price = r["unit_price"] if pd.notna(r.get("unit_price")) else None
+    unit_price = r["unit_price"] if pd.notna(r.get("unit_price")) else 0.0
     order_unit = str(r.get("order_unit") or "").strip()
     unit_qty = r["unit_qty"] if pd.notna(r.get("unit_qty")) else None
     min_unit_cost = r["min_unit_cost"] if pd.notna(r.get("min_unit_cost")) else None
 
     status = str(r.get("status") or "").strip()
 
-    is_stable = status == "已生效"
+    is_stable = status in ("", "已生效")
     gap_reason = ""
     if unit_price is None:
-        gap_reason = "无有效单价"
-    elif not is_stable:
+        unit_price = 0.0
+    if not is_stable:
         gap_reason = f"供应状态：{status}"
 
     return unit_price, order_unit, unit_qty, min_unit_cost, is_stable, gap_reason
