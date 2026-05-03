@@ -730,29 +730,45 @@ with tab4:
         col_chart1, col_chart2 = st.columns(2)
 
         with col_chart1:
-            # SKU cost breakdown: group by item (level != 2)
+            # SKU cost breakdown: donut chart
             sku_chart_rows = [r for r in recalc_data if r.get("level") != 2 and float(r.get("cost", 0) or 0) > 0]
             if sku_chart_rows:
                 sku_df = pd.DataFrame([
                     {"项目": r["item"], "成本": float(r["cost"])} for r in sku_chart_rows
                 ])
-                fig1 = px.pie(sku_df, values="成本", names="项目", title="SKU 成本拆解",
-                              color_discrete_sequence=px.colors.qualitative.Set3)
-                fig1.update_traces(textposition="inside", textinfo="label+percent")
-                fig1.update_layout(height=280, margin=dict(t=30, b=0, l=0, r=0))
+                colors1 = ["#1a1a1a", "#94c1ff", "#82e0aa", "#a9cce3", "#f4b8d0", "#d4a8e0"]
+                fig1 = px.pie(sku_df, values="成本", names="项目", title=None, hole=0.55,
+                              color_discrete_sequence=colors1)
+                fig1.update_traces(textposition="outside", textinfo="percent",
+                                   showlegend=True, legendgroup="sku",
+                                   marker=dict(line=dict(color="white", width=2)))
+                fig1.update_layout(
+                    height=260, margin=dict(t=10, b=10, l=0, r=0),
+                    legend=dict(orientation="v", yanchor="middle", y=0.5,
+                                xanchor="left", x=0.02, font=dict(size=12)),
+                    paper_bgcolor="white", plot_bgcolor="white",
+                )
                 st.plotly_chart(fig1, use_container_width=True)
 
         with col_chart2:
-            # Semi-product cost breakdown: sub-ingredient rows (level == 2)
+            # Semi-product cost breakdown: donut chart
             sub_rows = [r for r in recalc_data if r.get("level") == 2 and float(r.get("cost", 0) or 0) > 0]
             if sub_rows:
                 semi_df = pd.DataFrame([
                     {"项目": r["item"], "成本": float(r["cost"])} for r in sub_rows
                 ])
-                fig2 = px.pie(semi_df, values="成本", names="项目", title="半成品成本拆解",
-                              color_discrete_sequence=px.colors.qualitative.Set3)
-                fig2.update_traces(textposition="inside", textinfo="label+percent")
-                fig2.update_layout(height=280, margin=dict(t=30, b=0, l=0, r=0))
+                colors2 = ["#94c1ff", "#82e0aa", "#a9cce3", "#f4b8d0", "#d4a8e0"]
+                fig2 = px.pie(semi_df, values="成本", names="项目", title=None, hole=0.55,
+                              color_discrete_sequence=colors2)
+                fig2.update_traces(textposition="outside", textinfo="percent",
+                                   showlegend=True,
+                                   marker=dict(line=dict(color="white", width=2)))
+                fig2.update_layout(
+                    height=260, margin=dict(t=10, b=10, l=0, r=0),
+                    legend=dict(orientation="v", yanchor="middle", y=0.5,
+                                xanchor="left", x=0.02, font=dict(size=12)),
+                    paper_bgcolor="white", plot_bgcolor="white",
+                )
                 st.plotly_chart(fig2, use_container_width=True)
 
         # ── Scenario management ──────────────────────────────────────
