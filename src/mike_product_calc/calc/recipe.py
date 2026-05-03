@@ -84,19 +84,18 @@ def get_brand_spec_map(sheets: Dict[str, pd.DataFrame]) -> Dict[str, str]:
 
 
 def get_semi_product_recipes(sheets: Dict[str, pd.DataFrame]) -> Dict[str, List[dict]]:
-    """Read semi-product recipes from 半成品配方表_*.
-    Returns {semi_product_name: [{item, usage_qty, usage_unit}, ...]}.
+    """Read semi-product recipes from 产品配方表_*.
+    Returns {semi_product_name: [{item, usage_qty, usage_unit, unit_cost, total_cost}, ...]}.
     """
     recipes: Dict[str, List[dict]] = {}
     for sheet_name in sheets:
-        if "半成品配方表" not in sheet_name:
+        if "产品配方表" not in sheet_name:
             continue
         df = sheets[sheet_name]
-        # Try to find relevant columns
-        semi_col = _find_col(df, "品名", "半成品")
-        ing_col = _find_col(df, "配料", "原料")
+        semi_col = _find_col(df, "品名")
+        ing_col = _find_col(df, "配料")
         qty_col = _find_col(df, "用量")
-        unit_col = _find_col(df, "单位")
+        unit_cost_col = _find_col(df, "单位成本")
 
         if not semi_col or not ing_col or not qty_col:
             continue
@@ -110,13 +109,16 @@ def get_semi_product_recipes(sheets: Dict[str, pd.DataFrame]) -> Dict[str, List[
                 qty = float(row[qty_col])
             except (TypeError, ValueError):
                 qty = 0.0
-            unit = str(row.get(unit_col, "")).strip() if unit_col else ""
+            uc = _to_float(row.get(unit_cost_col)) if unit_cost_col else None
+            tc = uc * qty if uc else None
             if semi not in recipes:
                 recipes[semi] = []
             recipes[semi].append({
                 "item": ing,
                 "usage_qty": qty,
-                "usage_unit": unit,
+                "usage_unit": "",
+                "unit_cost": uc,
+                "total_cost": tc,
             })
     return recipes
 
@@ -222,6 +224,12 @@ def build_recipe_table(
         else:
             # Semi-product: show the semi row + sub-ingredients
             sub_items = semi_recipes[item]
+
+            # Calculate original batch cost from recipe data
+            original_batch_cost = sum(
+                s.get("total_cost") or 0.0 for s in sub_items
+            ) or 0.0
+
             semi_cost = 0.0
             sub_rows: List[RecipeRow] = []
 
@@ -232,20 +240,27 @@ def build_recipe_table(
                 sub_brand_cost = brand_cost_map.get(sub_name, 0.0)
                 sub_spec = spec_map.get(sub_name, "")
 
+                # Default store_price = brand_cost
                 sub_store_price = sub_brand_cost if sub_brand_cost > 0 else 0.0
                 sub_spec_parsed = _parse_spec(sub_spec)
-                sub_cost = 0.0
-                if sub_spec_parsed and sub_spec_parsed > 0 and sub_qty > 0:
-                    sub_cost = sub_qty * (sub_store_price / sub_spec_parsed)
+                sub_cost_in_recipe = 0.0
 
+                if sub_spec_parsed and sub_spec_parsed > 0 and sub_qty > 0:
+                    sub_cost_in_recipe = sub_qty * (sub_store_price / sub_spec_parsed)
+
+                # Scale to SKU-level: proportion of original batch cost * main material cost in SKU
+                sub_sku_cost = 0.0
+                if original_batch_cost > 0 and cost_val > 0:
+                    sub_sku_cost = (sub_cost_in_recipe / original_batch_cost) * cost_val
+
+                semi_cost += sub_sku_cost
                 sub_profit_rate = _calc_profit_rate(sub_store_price, sub_brand_cost)
-                semi_cost += sub_cost
 
                 sub_rows.append(RecipeRow(
                     item=sub_name,
-                    usage_qty=sub_qty,
+                    usage_qty=0,  # SKU-level usage not directly available for sub-ingredients
                     usage_unit=sub_unit,
-                    cost=round(sub_cost, 4),
+                    cost=round(sub_sku_cost, 4),
                     spec=sub_spec,
                     store_price=sub_store_price,
                     brand_cost=round(sub_brand_cost, 4),
@@ -254,7 +269,7 @@ def build_recipe_table(
                     is_semi=False,
                 ))
 
-            # Main semi row
+            # Main semi row (summary)
             rows.append(RecipeRow(
                 item=item,
                 usage_qty=0,
