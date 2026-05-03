@@ -308,12 +308,14 @@ def build_recipe_table(
                 ))
 
             # Main semi row (summary) — usage/cost from 产品出品表, pricing from 总原料成本表
+            # spec = sum of recipe batch quantities
+            batch_total = int(sum(s["usage_qty"] for s in sub_items))
             rows.append(RecipeRow(
                 item=item,
                 usage_qty=usage_qty,
                 usage_unit=usage_unit,
                 cost=round(cost_val, 4),
-                spec=spec,
+                spec=str(batch_total) if batch_total > 0 else spec,
                 store_price=store_price_map.get(item, 0.0),
                 brand_cost=round(brand_cost, 4),
                 profit_rate=round(_calc_profit_rate(store_price_map.get(item, 0.0), brand_cost) * 100, 1),
