@@ -741,12 +741,14 @@ with tab4:
                               color_discrete_sequence=colors1)
                 fig1.update_traces(textposition="outside", textinfo="percent",
                                    showlegend=True, legendgroup="sku",
+                                   textfont=dict(color="#333", size=12),
                                    marker=dict(line=dict(color="white", width=2)))
                 fig1.update_layout(
                     height=260, margin=dict(t=10, b=10, l=0, r=0),
                     legend=dict(orientation="v", yanchor="middle", y=0.5,
-                                xanchor="left", x=0.02, font=dict(size=12)),
-                    paper_bgcolor="white", plot_bgcolor="white",
+                                xanchor="left", x=0.02, font=dict(size=12, color="#333")),
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#333"),
                 )
                 st.plotly_chart(fig1, use_container_width=True)
 
@@ -762,12 +764,14 @@ with tab4:
                               color_discrete_sequence=colors2)
                 fig2.update_traces(textposition="outside", textinfo="percent",
                                    showlegend=True,
+                                   textfont=dict(color="#333", size=12),
                                    marker=dict(line=dict(color="white", width=2)))
                 fig2.update_layout(
                     height=260, margin=dict(t=10, b=10, l=0, r=0),
                     legend=dict(orientation="v", yanchor="middle", y=0.5,
-                                xanchor="left", x=0.02, font=dict(size=12)),
-                    paper_bgcolor="white", plot_bgcolor="white",
+                                xanchor="left", x=0.02, font=dict(size=12, color="#333")),
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#333"),
                 )
                 st.plotly_chart(fig2, use_container_width=True)
 
