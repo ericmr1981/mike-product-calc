@@ -30,8 +30,7 @@ from mike_product_calc.calc.prep_engine import (
     gaps_only,
     sales_to_production,
 )
-from mike_product_calc.calc.profit import margin_delta_report, sku_cost_breakdown, sku_profit_table
-from mike_product_calc.calc.target_pricing import suggest_adjustable_item_costs
+from mike_product_calc.calc.profit import sku_profit_table
 from mike_product_calc.model.production import ProductionRow
 from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.data.validator import issues_to_dataframe, validate_workbook
@@ -382,7 +381,7 @@ if "_mpc_state_synced" not in st.session_state:
     st.session_state["_mpc_state_synced"] = True
 
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["概览/校验", "SKU 毛利分析（双口径）", "Sheet 浏览", "原料价格模拟器", "产销计划"])
+tab1, tab2, tab3, tab4 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划"])
 
 with tab1:
     st.info("📌 **功能说明**：上传 Excel 文件后，系统自动解析并校验所有 sheet。\n"
@@ -409,140 +408,8 @@ with tab1:
         mime="text/csv",
     )
 
+
 with tab2:
-    st.info("📌 **功能说明**：查看所有上线 SKU 的毛利数据，支持出厂/门店双口径切换。\n"
-             "**使用方法**：选择口径和状态过滤，查看毛利表；切换 Tab 查看成本瀑布或目标成本反推。\n"
-             "**字段含义**：price=定价；cost=出厂成本；store_cost=门店成本；gross_profit=毛利额；"
-             "gross_margin=毛利率（%）。")
-    st.subheader("SKU 毛利分析（双口径）")
-    st.caption("口径说明：出厂口径=定价-成本；门店口径=定价-门店成本（以产品毛利表为数据源）。")
-
-    basis = st.radio(
-        "选择口径",
-        options=["factory", "store"],
-        format_func=lambda x: "出厂口径" if x == "factory" else "门店口径",
-        horizontal=True,
-    )
-    status_only = st.selectbox("状态过滤", options=["(全部)", "上线", "下线"], index=1)
-    only_status = None if status_only == "(全部)" else status_only
-
-    df_profit = sku_profit_table(wb.sheets, basis=basis, only_status=only_status)
-    if df_profit.empty:
-        st.warning("未找到可分析的 产品毛利表_* 数据（或当前工作簿缺少对应 sheet）。")
-    else:
-        show = df_profit.copy()
-        show["gross_profit"] = show["gross_profit"].round(2)
-        show["gross_margin"] = (show["gross_margin"] * 100).round(2)
-        show["workbook_margin"] = (show["workbook_margin"] * 100).round(2)
-        show["margin_delta"] = (show["margin_delta"] * 100).round(2)
-
-        st.dataframe(
-            show,
-            use_container_width=True,
-            height=380,
-            column_config={
-                "gross_profit": st.column_config.NumberColumn("gross_profit(元)"),
-                "gross_margin": st.column_config.NumberColumn("gross_margin(%)"),
-                "workbook_margin": st.column_config.NumberColumn("workbook_margin(%)"),
-                "margin_delta": st.column_config.NumberColumn("delta(pp)"),
-            },
-        )
-
-        st.divider()
-        st.markdown("#### F-002 验收 Oracle（与 Excel 交叉验证）")
-        stats_df, top_df = margin_delta_report(df_profit, top_n=20)
-        col_a, col_b = st.columns([1, 1])
-        with col_a:
-            st.caption("按品类统计的毛利率绝对偏差（百分点）")
-            st.dataframe(stats_df.round(4), use_container_width=True, height=220)
-        with col_b:
-            top_show = top_df.copy()
-            if not top_show.empty:
-                top_show["gross_profit"] = top_show["gross_profit"].round(2)
-                top_show["gross_margin"] = (top_show["gross_margin"] * 100).round(2)
-                top_show["workbook_margin"] = (top_show["workbook_margin"] * 100).round(2)
-                top_show["margin_delta"] = (top_show["margin_delta"] * 100).round(2)
-                top_show["abs_margin_delta_pp"] = top_show["abs_margin_delta_pp"].round(4)
-            st.caption("Top-N 偏差最大的 SKU")
-            st.dataframe(top_show, use_container_width=True, height=220)
-
-        st.download_button(
-            "下载 F-002 Top 偏差 CSV",
-            data=top_df.to_csv(index=False).encode("utf-8"),
-            file_name="f002_margin_delta_top.csv",
-            mime="text/csv",
-        )
-
-        st.divider()
-        st.markdown("#### 成本瀑布（Best-effort）")
-        pick = st.selectbox("选择一个 SKU (ProductKey)", options=show["product_key"].tolist())
-        breakdown = sku_cost_breakdown(wb.sheets, product_key=pick, basis=basis)
-        if breakdown.empty:
-            st.info("该 SKU 暂无出品表成本明细（或缺少 产品出品表_* / 总成本 列）。")
-        else:
-            st.dataframe(breakdown, use_container_width=True, height=240)
-            agg = breakdown.groupby("bucket", as_index=False)["cost"].sum().sort_values("cost", ascending=False)
-            st.bar_chart(agg.set_index("bucket")["cost"])
-
-            st.divider()
-            st.markdown("#### F-003 目标毛利率反推原料定价（第一版）")
-            default_margin = 72 if basis == "store" else 80
-            target_margin_pct = st.slider("目标毛利率(%)", min_value=1, max_value=99, value=default_margin)
-            lock_candidates = breakdown["item"].dropna().astype(str).tolist()
-            locked_items = st.multiselect("锁定不参与调整的原料/项目", options=lock_candidates)
-
-            pricing_df = suggest_adjustable_item_costs(
-                wb.sheets,
-                product_key=pick,
-                target_margin_rate=target_margin_pct / 100.0,
-                basis=basis,
-                locked_items=locked_items,
-            )
-            if pricing_df.empty:
-                st.info("当前无法生成反推定价建议（可能缺少价格/成本/成本明细）。")
-            else:
-                display_cols = [
-                    "item",
-                    "bucket",
-                    "cost",
-                    "is_fixed",
-                    "is_locked",
-                    "is_adjustable",
-                    "suggested_cost_ideal",
-                    "suggested_cost_acceptable",
-                    "suggested_cost_redline",
-                ]
-                st.dataframe(pricing_df[display_cols], use_container_width=True, height=260)
-                st.download_button(
-                    "下载 F-003 反推定价 CSV",
-                    data=pricing_df.to_csv(index=False).encode("utf-8"),
-                    file_name="f003_target_pricing.csv",
-                    mime="text/csv",
-                )
-
-                st.divider()
-                st.markdown("#### 主原料配方拆解")
-                st.caption("展开主原料的配方，查看子配料明细。门店价格可调，自动重算成本。")
-
-                recipe_df = build_recipe_table(wb.sheets, product_key=pick, basis=basis)
-                if recipe_df.empty:
-                    st.info("该 SKU 暂无配方明细数据。")
-                else:
-                    st.dataframe(
-                        recipe_df,
-                        use_container_width=True,
-                        height=360,
-                        column_config={
-                            "usage_qty": st.column_config.NumberColumn("用量", format="%.1f"),
-                            "cost": st.column_config.NumberColumn("成本", format="%.2f"),
-                            "spec": st.column_config.TextColumn("规格"),
-                            "store_price": st.column_config.NumberColumn("门店价格", format="%.2f"),
-                            "brand_cost": st.column_config.NumberColumn("品牌成本", format="%.2f"),
-                        "profit_rate": st.column_config.NumberColumn("利润率(%)", format="%.1f"),
-                        },
-                    )
-
-with tab3:
     st.info("📌 **功能说明**：浏览工作簿中任意 sheet 的原始数据。\n"
              "**使用方法**：下拉选择 sheet 名称，查看行列数据。\n"
              "**字段含义**：Rows=数据行数；Cols=列数；表格内容即对应 sheet 的原始数据。")
@@ -556,7 +423,7 @@ with tab3:
 
 store: ScenarioStore = st.session_state["sim_store"]
 
-with tab4:
+with tab3:
     st.info("功能说明：选产品 → 查看 SKU 规格毛利 → 展开配方明细，调整门店价格/售价，实时看毛利变化。\n"
              "使用方法：选择产品 → 选 SKU 规格 → 在配方表中调整门店价格或在右侧调售价 → 保存方案对比。")
     st.subheader("原料价格模拟器")
@@ -887,7 +754,7 @@ def _init_session():
         st.session_state["current_plan_name"] = None
 
 
-with tab5:
+with tab4:
     st.info("📌 **功能说明**：① 录入销售计划 → ② 生成生产计划 → ③ 展开 BOM 计算原料需求 → ④ 成本核算。\n"
              "**使用方法**：从上至下按步骤操作。\n"
              "**销售SKU**=产品毛利表成品；**生产项**=配方中的冰激淋基底。")
