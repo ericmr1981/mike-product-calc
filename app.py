@@ -15,6 +15,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 from mike_product_calc.calc.recipe import build_recipe_table, _parse_spec, _calc_profit_rate
@@ -721,6 +722,49 @@ with tab4:
         with col_p3:
             margin_rate = (gross_profit / new_price * 100) if new_price > 0 else 0
             st.metric("毛利", f"{gross_profit:.2f} 元", delta=f"{margin_rate:.1f}%")
+
+        # ── Cost breakdown charts ────────────────────────────────────
+        st.divider()
+        st.markdown("##### 成本拆解")
+
+        col_chart1, col_chart2 = st.columns(2)
+
+        with col_chart1:
+            # SKU cost breakdown: use the recipe table (level != 2 rows)
+            sku_cost_data = recalc_data
+            sku_chart_rows = [r for r in sku_cost_data if r.get("level") != 2]
+            if sku_chart_rows:
+                categories = {"原料": 0.0, "半成品": 0.0, "包材": 0.0}
+                for r in sku_chart_rows:
+                    item = str(r.get("item", ""))
+                    cost = float(r.get("cost", 0) or 0)
+                    # Determine category based on context
+                    if r.get("is_semi") or r.get("level") == 1:
+                        categories["半成品"] += cost
+                    elif any(kw in item for kw in ["碗", "杯", "勺", "卡", "托", "袋", "盒"]):
+                        categories["包材"] += cost
+                    else:
+                        categories["原料"] += cost
+                sku_chart_df = pd.DataFrame([
+                    {"类别": k, "成本": round(v, 2)} for k, v in categories.items() if v > 0
+                ])
+                if not sku_chart_df.empty:
+                    fig1 = px.pie(sku_chart_df, values="成本", names="类别", title="SKU 成本拆解")
+                    fig1.update_traces(textinfo="label+percent", textposition="outside")
+                    st.plotly_chart(fig1, use_container_width=True)
+
+        with col_chart2:
+            # Semi-product cost breakdown: sub-ingredient rows (level == 2)
+            sub_rows = [r for r in sku_cost_data if r.get("level") == 2]
+            if sub_rows:
+                semi_chart_df = pd.DataFrame([
+                    {"原料": r["item"], "成本": round(float(r.get("cost", 0) or 0), 2)}
+                    for r in sub_rows if float(r.get("cost", 0) or 0) > 0
+                ])
+                if not semi_chart_df.empty:
+                    fig2 = px.pie(semi_chart_df, values="成本", names="原料", title="半成品成本拆解")
+                    fig2.update_traces(textinfo="label+percent", textposition="outside")
+                    st.plotly_chart(fig2, use_container_width=True)
 
         # ── Scenario management ──────────────────────────────────────
         st.divider()
