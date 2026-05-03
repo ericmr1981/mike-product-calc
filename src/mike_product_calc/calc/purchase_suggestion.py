@@ -72,7 +72,6 @@ def build_purchase_list(
 
     # Resolve latest_order_date
     has_ld_col = "latest_order_date" in df.columns
-    has_ld_val = df["latest_order_date"].notna().any() if has_ld_col else False
 
     def make_arrival(row: pd.Series) -> Optional[str]:
         """arrival_date = order_date (target delivery date).

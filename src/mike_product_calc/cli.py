@@ -552,8 +552,6 @@ def _add_state_subparser(sub: argparse._SubParsersAction) -> None:
     s = p.add_subparsers(dest="state_cmd", required=True)
 
     # shared --name argument (add to each child; argparse doesn't inherit parent-level args)
-    name_kw = {"--name"}  # marker for which args share "name"
-
     # init
     sp = s.add_parser("init",  help="Init or overwrite a named state")
     sp.add_argument("--name", default="default", help="State name")

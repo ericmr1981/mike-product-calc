@@ -20,6 +20,7 @@ import pandas as pd
 
 from mike_product_calc.calc.profit import ProfitBasis
 from mike_product_calc.data.shared import build_product_key, to_float
+from mike_product_calc.model.production import ProductionRow  # noqa: F401
 
 # -------------------------------------------------------------------------------------------------
 # Dataclasses
