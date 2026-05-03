@@ -666,28 +666,36 @@ with tab4:
             # Skip semi-product summary rows (level=1 = is_semi rows) — costs are sum of sub-items
             if row.get("is_semi", False):
                 continue
-            sp = row.get("store_price")
-            bc = row.get("brand_cost", 0) or 0
-            spec_str = str(row.get("spec", "") or "").strip()
-            uq = row.get("usage_qty", 0) or 0
+
+            orig_cost = row.get("cost", 0) or 0
+            orig_sp = row.get("store_price", 0) or 0
+            new_sp_val = row.get("store_price", 0) or 0
 
             try:
-                sp_f = float(sp) if sp is not None else 0
-                uq_f = float(uq)
-                bc_f = float(bc)
+                new_sp_f = float(new_sp_val)
+                orig_sp_f = float(orig_sp)
             except (TypeError, ValueError):
                 continue
 
-            # Parse spec — use _parse_spec from recipe module
-            spec_val = _parse_spec(spec_str)
+            # Cost is proportional to store_price for all ingredient types
+            # (direct: cost = qty * store_price/spec; sub-ingredient: cost = batch_qty * store_price/spec * scale)
+            # So new_cost = orig_cost * (new_store_price / orig_store_price)
+            if orig_sp_f > 0 and abs(orig_sp_f - new_sp_f) > 0.0001:
+                row["cost"] = round(float(orig_cost) * (new_sp_f / orig_sp_f), 4)
+            # else keep original cost
 
-            calculated_cost = 0.0
-            if spec_val and spec_val > 0 and uq_f > 0 and sp_f > 0:
-                calculated_cost = uq_f * (sp_f / spec_val)
+            # Recalculate profit_rate
+            try:
+                bc_f = float(row.get("brand_cost", 0) or 0)
+            except (TypeError, ValueError):
+                bc_f = 0
+            row["profit_rate"] = round(_calc_profit_rate(new_sp_f, bc_f), 4)
 
-            row["cost"] = round(calculated_cost, 4)
-            row["profit_rate"] = round(_calc_profit_rate(sp_f, bc_f), 4)
-            total_cost += calculated_cost
+            row_cost = row.get("cost", 0) or 0
+            try:
+                total_cost += float(row_cost)
+            except (TypeError, ValueError):
+                pass
 
         # ── Pricing & margin KPI cards ──────────────────────────────
         default_price = float(sku_df[sku_df["product_key"] == selected_sku]["price"].iloc[0]) if not sku_df[sku_df["product_key"] == selected_sku].empty else 0.0

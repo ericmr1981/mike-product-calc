@@ -230,6 +230,10 @@ def build_recipe_table(
                 s.get("total_cost") or 0.0 for s in sub_items
             ) or 0.0
 
+            # For cost recalculation: store the scaling factor
+            # scale = cost_val / original_batch_cost (SKU-level cost per unit of batch cost)
+            scale_factor = cost_val / original_batch_cost if original_batch_cost > 0 else 0.0
+
             semi_cost = 0.0
             sub_rows: List[RecipeRow] = []
 
@@ -243,22 +247,20 @@ def build_recipe_table(
                 # Default store_price = brand_cost
                 sub_store_price = sub_brand_cost if sub_brand_cost > 0 else 0.0
                 sub_spec_parsed = _parse_spec(sub_spec)
-                sub_cost_in_recipe = 0.0
+                sub_sku_cost = 0.0
 
                 if sub_spec_parsed and sub_spec_parsed > 0 and sub_qty > 0:
-                    sub_cost_in_recipe = sub_qty * (sub_store_price / sub_spec_parsed)
-
-                # Scale to SKU-level: proportion of original batch cost * main material cost in SKU
-                sub_sku_cost = 0.0
-                if original_batch_cost > 0 and cost_val > 0:
-                    sub_sku_cost = (sub_cost_in_recipe / original_batch_cost) * cost_val
+                    # Cost of this ingredient in one batch of the semi-product
+                    sub_cost_in_batch = sub_qty * (sub_store_price / sub_spec_parsed)
+                    # Scale to SKU level
+                    sub_sku_cost = sub_cost_in_batch * scale_factor
 
                 semi_cost += sub_sku_cost
                 sub_profit_rate = _calc_profit_rate(sub_store_price, sub_brand_cost)
 
                 sub_rows.append(RecipeRow(
                     item=sub_name,
-                    usage_qty=0,  # SKU-level usage not directly available for sub-ingredients
+                    usage_qty=sub_qty,
                     usage_unit=sub_unit,
                     cost=round(sub_sku_cost, 4),
                     spec=sub_spec,
