@@ -8,6 +8,7 @@ Provides:
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -103,14 +104,16 @@ def get_semi_product_recipes(sheets: Dict[str, pd.DataFrame]) -> Dict[str, List[
         for _, row in df.iterrows():
             semi = str(row.get(semi_col, "")).strip()
             ing = str(row.get(ing_col, "")).strip()
-            if not semi or not ing:
+            if not semi or not ing or semi.lower() == "nan" or ing.lower() == "nan":
                 continue
             try:
                 qty = float(row[qty_col])
             except (TypeError, ValueError):
                 qty = 0.0
             uc = _to_float(row.get(unit_cost_col)) if unit_cost_col else None
-            tc = uc * qty if uc else None
+            if uc is None or math.isnan(uc):
+                uc = 0.0
+            tc = round(uc * qty, 4)
             if semi not in recipes:
                 recipes[semi] = []
             recipes[semi].append({
@@ -226,9 +229,14 @@ def build_recipe_table(
             sub_items = semi_recipes[item]
 
             # Calculate original batch cost from recipe data
-            original_batch_cost = sum(
-                s.get("total_cost") or 0.0 for s in sub_items
-            ) or 0.0
+            _tc_list: list[float] = []
+            for s in sub_items:
+                v = s.get("total_cost")
+                if v is None or (isinstance(v, float) and math.isnan(v)):
+                    _tc_list.append(0.0)
+                else:
+                    _tc_list.append(float(v))
+            original_batch_cost = sum(_tc_list) or 0.0
 
             # For cost recalculation: store the scaling factor
             # scale = cost_val / original_batch_cost (SKU-level cost per unit of batch cost)
