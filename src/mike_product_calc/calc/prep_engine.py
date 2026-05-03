@@ -725,16 +725,6 @@ def bom_expand_multi(
 # Gaps helper
 # -------------------------------------------------------------------------------------------------
 
-def highlight_gaps(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Return a copy of df with is_gap=True rows annotated.
-    The caller can use this to highlight缺口项 in Streamlit.
-    """
-    if df.empty or "is_gap" not in df.columns:
-        return df.copy()
-    return df.copy()
-
-
 def gaps_only(df: pd.DataFrame) -> pd.DataFrame:
     """Return only the gap rows (no valid price or unstable supply)."""
     if df.empty or "is_gap" not in df.columns:

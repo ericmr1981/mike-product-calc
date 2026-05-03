@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import sys
 import tempfile
-import io
 import json
 import hashlib
-from datetime import date, timedelta, datetime
+from datetime import date, datetime
 import os
 from pathlib import Path
 
@@ -30,14 +29,57 @@ from mike_product_calc.calc.prep_engine import (
     gaps_only,
     sales_to_production,
 )
-from mike_product_calc.calc.profit import sku_profit_table
-from mike_product_calc.model.production import ProductionRow
 from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.data.validator import issues_to_dataframe, validate_workbook
-from mike_product_calc.state import get_store
+from mike_product_calc.calc.profit import sku_profit_table
+from mike_product_calc.model.production import ProductionRow
 
 
 st.set_page_config(page_title="mike-product-calc", layout="wide")
+
+# ── Mobile full-screen CSS ─────────────────────────────────────────────────
+st.markdown("""
+<style>
+    /* Hide Streamlit chrome */
+    #MainMenu {visibility: hidden;}
+    .stAppDeployButton {display: none !important;}
+    footer {display: none !important;}
+    header {display: none !important;}
+
+    /* Viewport: full-screen, no scroll outside app */
+    .stApp {min-height: 100dvh;}
+
+    /* Responsive column collapse */
+    @media (max-width: 768px) {
+        .stColumn, div[data-testid="column"] {
+            flex: 1 1 100% !important;
+            width: 100% !important;
+            min-width: 100% !important;
+        }
+        section[data-testid="stSidebar"] {display: none !important;}
+
+        /* Touch-friendly controls */
+        .stButton button, .stDownloadButton button {
+            min-height: 44px !important;
+            width: 100% !important;
+        }
+        .stSelectbox, .stNumberInput, .stTextInput, .stDateInput {
+            width: 100% !important;
+        }
+        div[data-baseweb="select"] {width: 100% !important;}
+
+        /* Bigger fonts */
+        .stDataFrame td, .stDataFrame th {font-size: 14px !important;}
+        .stMarkdown, .stText {font-size: 16px !important;}
+        h1 {font-size: 22px !important;}
+        h2 {font-size: 18px !important;}
+        h3 {font-size: 16px !important;}
+
+        /* Fix data editor overflow */
+        .stDataFrame, div[data-testid="stDataFrame"] {overflow-x: auto !important;}
+    }
+</style>
+""", unsafe_allow_html=True)
 
 st.title("蜜可诗产品经营决策台")
 st.caption("当前版本：Excel 解析 / 校验、SKU 毛利分析（双口径）、F-002 oracle、F-003 第一版反推定价。")
@@ -97,7 +139,7 @@ def _save_upload(bytes_data: bytes, orig_name: str) -> dict:
 
 
 # UI: file manager
-with st.expander("📁 数据文件管理（永久保存，可删除/替换）", expanded=True):
+with st.expander("📁 数据文件管理（永久保存，可删除/替换）", expanded=False):
     registry = _load_registry()
 
     # Choose current file
@@ -227,160 +269,6 @@ sheet_names = list(wb.sheets.keys())
 
 # ── CLI/UI shared state (disk) ─────────────────────────────────────────
 
-_store = get_store()
-if "mpc_state_name" not in st.session_state:
-    st.session_state["mpc_state_name"] = "default"
-
-
-def _load_state_into_session(state_name: str) -> None:
-    """Load disk state into Streamlit session_state once."""
-    state = _store.load(state_name)
-
-    # Always keep workbook path in sync (so CLI can operate on the same file)
-    if workbook_path:
-        state.xlsx_path = str(Path(workbook_path).resolve())
-
-    # Init sim store
-    if "sim_store" not in st.session_state:
-        st.session_state["sim_store"] = ScenarioStore()
-
-    # Load material sim versions
-    sim_store: ScenarioStore = st.session_state["sim_store"]
-    if state.material_sim_versions and not sim_store.list_names():
-        for nm, adjs in state.material_sim_versions.items():
-            adjustments = tuple(
-                MaterialPriceAdjustment(item=str(a.get("item", "")).strip(), new_unit_price=float(a.get("new_unit_price", 0)))
-                for a in (adjs or [])
-                if str(a.get("item", "")).strip()
-            )
-            sim_store.put(Scenario(name=str(nm), adjustments=adjustments))
-
-    # Production plans
-    if "production_plans" not in st.session_state:
-        st.session_state["production_plans"] = {}
-    if "current_plan_name" not in st.session_state:
-        st.session_state["current_plan_name"] = None
-
-    plans: dict = st.session_state["production_plans"]
-    if state.production_plans and not plans:
-        for plan_name, rows in state.production_plans.items():
-            rr: list[ProductionRow] = []
-            for r in (rows or []):
-                rr.append(
-                    ProductionRow(
-                        date=str(r.get("date", "")),
-                        sku_key=str(r.get("sku_key", "")),
-                        spec=str(r.get("spec", "")),
-                        qty=float(r.get("qty", 0) or 0),
-                        plan_type=str(r.get("plan_type", "sales")) if r.get("plan_type") else "sales",
-                    )
-                )
-            plans[str(plan_name)] = rr
-
-    # Persist updated xlsx_path back to disk (best-effort)
-    state.touch()
-    _store.save(state)
-
-
-def _save_session_into_state(state_name: str) -> None:
-    """Persist current Streamlit session_state into disk state."""
-    state = _store.load(state_name)
-
-    # workbook path
-    if workbook_path:
-        state.xlsx_path = str(Path(workbook_path).resolve())
-
-    # sim versions
-    sim_store: ScenarioStore = st.session_state.get("sim_store") or ScenarioStore()
-    sim_versions: dict = {}
-    for nm in sim_store.list_names():
-        sc = sim_store.get(nm)
-        if not sc:
-            continue
-        sim_versions[nm] = [
-            {"item": a.item, "new_unit_price": float(a.new_unit_price)}
-            for a in (sc.adjustments or ())
-            if str(a.item).strip()
-        ]
-    state.material_sim_versions = sim_versions
-
-    # production plans
-    plans: dict = st.session_state.get("production_plans") or {}
-    out_plans: dict = {}
-    for plan_name, rows in plans.items():
-        out_plans[str(plan_name)] = [
-            {"date": r.date, "sku_key": r.sku_key, "spec": r.spec, "qty": float(r.qty), "plan_type": r.plan_type}
-            for r in (rows or [])
-        ]
-    state.production_plans = out_plans
-
-    state.touch()
-    _store.save(state)
-
-
-def _auto_save() -> None:
-    """Save current UI session to disk state if auto-save is enabled."""
-    if st.session_state.get("mpc_auto_save", True):
-        _save_session_into_state(st.session_state.get("mpc_state_name", "default"))
-
-
-# UI control for state management (sidebar)
-with st.sidebar:
-    st.markdown("### 💾 CLI/UI State")
-    existing_states = ["default"] + [s for s in _store.list_states() if s != "default"]
-    st.selectbox(
-        "State 名称",
-        options=existing_states,
-        index=existing_states.index(st.session_state.get("mpc_state_name", "default"))
-        if st.session_state.get("mpc_state_name", "default") in existing_states
-        else 0,
-        key="mpc_state_name",
-    )
-
-    # Auto-save toggle (default ON)
-    if "mpc_auto_save" not in st.session_state:
-        st.session_state["mpc_auto_save"] = True
-    auto_save = st.checkbox("Auto-save（默认开启）", value=st.session_state["mpc_auto_save"],
-                             help="开启后，每次保存版本/方案/计划时自动落盘，无需手动点 Save",
-                             key="mpc_auto_save_chk")
-    st.session_state["mpc_auto_save"] = auto_save
-
-    col_s1, col_s2, col_s3 = st.columns(3)
-    with col_s1:
-        if st.button("⬇️ Load", use_container_width=True):
-            st.session_state.pop("_mpc_state_synced", None)
-            st.rerun()
-    with col_s2:
-        if st.button("⬆️ Save", use_container_width=True):
-            _save_session_into_state(st.session_state["mpc_state_name"])
-            st.success("state 已保存")
-    with col_s3:
-        if st.button("📸 Snapshot", use_container_width=True, help="保存当前 state 的快照"):
-            snaps = _store.list_snapshots(st.session_state["mpc_state_name"])
-            ts = _store.snapshot(st.session_state["mpc_state_name"])
-            st.success(f"快照已保存（{len(snaps)+1} 份，最多保留 {_store.MAX_SNAPSHOTS} 份）")
-
-    # Snapshot list + restore
-    snaps = _store.list_snapshots(st.session_state["mpc_state_name"])
-    if snaps:
-        with st.expander("📸 Snapshots（可回滚）", expanded=False):
-            snap_opts = [f"{s['ts']}" for s in snaps]
-            snap_sel = st.selectbox("选择快照", options=snap_opts, key="_snap_sel")
-            if st.button("↩️ Restore", key="_snap_restore_btn"):
-                sid = next((s["id"] for s in snaps if s["ts"] == snap_sel), None)
-                if sid:
-                    _store.restore_snapshot(sid, st.session_state["mpc_state_name"])
-                    st.session_state.pop("_mpc_state_synced", None)
-                    st.rerun()
-    st.caption(f"Workbook path: {workbook_path}")
-
-
-# One-time sync
-if "_mpc_state_synced" not in st.session_state:
-    _load_state_into_session(st.session_state["mpc_state_name"])
-    st.session_state["_mpc_state_synced"] = True
-
-
 tab1, tab2, tab3, tab4 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划"])
 
 with tab1:
@@ -398,7 +286,7 @@ with tab1:
 
     st.subheader("数据健康/校验报告")
     df_issues = issues_to_dataframe(issues)
-    st.dataframe(df_issues, use_container_width=True, height=360)
+    st.dataframe(df_issues, use_container_width=True, height=360, hide_index=True)
 
     csv = df_issues.to_csv(index=False).encode("utf-8")
     st.download_button(
@@ -417,10 +305,12 @@ with tab2:
     selected = st.selectbox("选择 sheet", sheet_names)
     df = wb.sheets[selected]
     st.write(f"Rows: {df.shape[0]} | Cols: {df.shape[1]}")
-    st.dataframe(df.head(200), use_container_width=True, height=420)
+    st.dataframe(df.head(200), use_container_width=True, height=420, hide_index=True)
 
 # ── Tab4: 原料价格模拟器（重设计）────────────────────────────────
 
+if "sim_store" not in st.session_state:
+    st.session_state["sim_store"] = ScenarioStore()
 store: ScenarioStore = st.session_state["sim_store"]
 
 with tab3:
@@ -489,6 +379,7 @@ with tab3:
         display_t4,
         use_container_width=True,
         height=200,
+        hide_index=True,
         column_order=["product_key", "price", "cost", "gross_margin_pct"],
         column_config={
             "product_key": "SKU",
@@ -523,6 +414,7 @@ with tab3:
             editor_df,
             use_container_width=True,
             height=400,
+            hide_index=True,
             column_config={
                 "item": st.column_config.TextColumn("项目", disabled=True),
                 "usage_qty": st.column_config.NumberColumn("用量", disabled=True, format="%.1f"),
@@ -671,7 +563,6 @@ with tab3:
                 if scenario_name and adjustments:
                     store.put(Scenario(name=scenario_name, adjustments=tuple(adjustments)))
                     st.success(f"方案「{scenario_name}」已保存")
-                    _auto_save()
                     st.rerun()
 
         # Saved scenarios
@@ -695,7 +586,7 @@ with tab3:
                     s_a, s_b = store.get(va), store.get(vb)
                     if s_a and s_b:
                         diff = compare_scenarios(s_a, s_b, wb.sheets, basis=basis_t4)
-                        st.dataframe(diff, use_container_width=True, height=420)
+                        st.dataframe(diff, use_container_width=True, height=420, hide_index=True)
 # ── Tab5: 产销计划 ────────────────────────────────────────────────────
 
 # Build SKU list from workbook for dropdown
@@ -810,7 +701,6 @@ with tab4:
                     plans[SALES_KEY] = imported
                     st.session_state["_csv_sales_id"] = _sid
                     st.session_state["_csv_import_msg"] = f"✅ 导入 {len(imported)} 行销售计划"
-                    _auto_save()
                     st.rerun()
                 else:
                     st.error("CSV 需要列: 日期, SKU, 数量")
@@ -833,7 +723,7 @@ with tab4:
 
     edited_sales = st.data_editor(
         pd.DataFrame(sales_default), num_rows="dynamic", use_container_width=True,
-        height=300,
+        height=300, hide_index=True,
         column_config={
             "日期": st.column_config.TextColumn("日期", required=True),
             "SKU": st.column_config.SelectboxColumn("SKU", options=_all_skus),
@@ -853,7 +743,6 @@ with tab4:
                 qty=float(row["数量"]) if pd.notna(row["数量"]) else 0, plan_type="sales",
             ))
         plans[SALES_KEY] = rows
-        _auto_save()
         st.session_state["_msg_sales_saved"] = f"✅ 已保存销售计划（{len(rows)} 行）"
         st.rerun()
 
@@ -887,7 +776,6 @@ with tab4:
             if prod_rows:
                 plans[PROD_KEY] = prod_rows
                 st.session_state["prod_gen_version"] += 1
-                _auto_save()
                 st.success(f"✅ 已生成生产计划（{len(prod_rows)} 行），可直接在下表编辑")
             else:
                 st.warning("无法展开为生产计划（销售 SKU 缺少配方数据）")
@@ -907,7 +795,7 @@ with tab4:
 
     edited_prod = st.data_editor(
         pd.DataFrame(prod_data_rows), num_rows="dynamic", use_container_width=True,
-        height=300,
+        height=300, hide_index=True,
         column_config={
             "日期": st.column_config.TextColumn("日期", required=True),
             "生产项": st.column_config.SelectboxColumn("生产项", options=_production_skus),
@@ -927,7 +815,6 @@ with tab4:
                     plan_type="production",
                 ))
             plans[PROD_KEY] = rows
-            _auto_save()
             st.session_state["_msg_prod_saved"] = f"✅ 已保存生产计划（{len(rows)} 行）"
             st.rerun()
 
@@ -1033,7 +920,7 @@ with tab4:
                 lambda x: "⚠️ 缺口" if x else "✅ 正常"
             )
             st.dataframe(
-                display, use_container_width=True, height=500,
+                display, use_container_width=True, height=500, hide_index=True,
                 column_config={
                     "material": st.column_config.TextColumn("原料名称"),
                     "level": st.column_config.TextColumn("层级"),
@@ -1066,7 +953,7 @@ with tab4:
                     "unit_price", "is_semi_finished",
                 ]].copy()
                 st.warning(f"发现 {len(gaps)} 个缺口项：")
-                st.dataframe(gap_display, use_container_width=True, height=400)
+                st.dataframe(gap_display, use_container_width=True, height=400, hide_index=True)
 
         with inner_tab_c:
             st.markdown("#### 统计概览")
@@ -1083,7 +970,7 @@ with tab4:
                     .rename(columns={"material": "原料种类数"})
                 )
                 st.markdown("##### 按层级统计")
-                st.dataframe(by_level, use_container_width=True)
+                st.dataframe(by_level, use_container_width=True, hide_index=True)
 
         # ════════════════════════════════════════════════════════════════════
         # Step 4: 成本核算概览
@@ -1114,7 +1001,7 @@ with tab4:
             "类型", "原料数", "采购量", "成本"
         ]].style.format({
             "采购量": "{:.2f}", "成本": "{:.2f}",
-        }), use_container_width=True)
+        }), use_container_width=True, hide_index=True)
 
     elif run_expand and bom_result is not None and bom_result.empty:
         st.info("BOM 展开结果为空（可能选中的 SKU 在出品表中无配料数据）。")
