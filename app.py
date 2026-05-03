@@ -621,11 +621,11 @@ with tab4:
         display_t4,
         use_container_width=True,
         height=200,
+        column_order=["product_key", "price", "cost", "gross_margin_pct"],
         column_config={
             "product_key": "SKU",
             "price": st.column_config.NumberColumn("定价", format="%.2f"),
             "cost": st.column_config.NumberColumn("成本", format="%.2f"),
-            "gross_profit": st.column_config.NumberColumn("毛利", format="%.2f"),
             "gross_margin_pct": "毛利率",
         },
     )
