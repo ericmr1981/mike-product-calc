@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+import tempfile
 from tempfile import TemporaryDirectory
 
 REPO = Path(__file__).resolve().parents[1]
@@ -18,18 +19,26 @@ XLSX = REPO / "data" / "蜜可诗产品库.xlsx"
 SRC = REPO / "src"
 
 
-def _run_cli(*args: str) -> subprocess.CompletedProcess:
+def _run_cli(*args: str, state_dir: str | None = None) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC)
+    if state_dir:
+        env["MPC_STATE_DIR"] = state_dir
     cmd = [sys.executable, "-m", "mike_product_calc", *args]
     return subprocess.run(cmd, env=env, capture_output=True, text=True)
 
 
 # ── 1. State management ──────────────────────────────────────────────────────────
 
+def _state_dir():
+    """Return a temporary state directory path that persists for the test scope."""
+    return str(Path(tempfile.mkdtemp()))
+
+
 def test_cli_state_init():
+    sd = _state_dir()
     r = _run_cli("state", "init", "--xlsx", str(XLSX), "--price-version", "当前",
-                 "--scenario-name", "A")
+                 "--scenario-name", "A", state_dir=sd)
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     assert payload["cmd"] == "state-init"
@@ -38,7 +47,8 @@ def test_cli_state_init():
 
 
 def test_cli_state_list():
-    r = _run_cli("state", "list")
+    sd = _state_dir()
+    r = _run_cli("state", "list", state_dir=sd)
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     assert payload["cmd"] == "state-list"
@@ -46,7 +56,9 @@ def test_cli_state_list():
 
 
 def test_cli_state_load():
-    r = _run_cli("state", "load")
+    sd = _state_dir()
+    _run_cli("state", "init", "--xlsx", str(XLSX), state_dir=sd)
+    r = _run_cli("state", "load", state_dir=sd)
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     assert payload["cmd"] == "state-load"
@@ -54,21 +66,26 @@ def test_cli_state_load():
 
 
 def test_cli_state_save():
-    r = _run_cli("state", "save", "--name", "test-session")
+    sd = _state_dir()
+    r = _run_cli("state", "save", "--name", "test-session", state_dir=sd)
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     assert payload["cmd"] == "state-save"
 
 
 def test_cli_state_delete():
-    r = _run_cli("state", "delete", "--name", "test-session")
+    sd = _state_dir()
+    _run_cli("state", "init", "--xlsx", str(XLSX), "--name", "todelete", state_dir=sd)
+    r = _run_cli("state", "delete", "--name", "todelete", state_dir=sd)
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     assert payload["cmd"] == "state-delete"
 
 
 def test_cli_state_snapshot():
-    r = _run_cli("state", "snapshot", "--name", "default")
+    sd = _state_dir()
+    _run_cli("state", "init", "--xlsx", str(XLSX), state_dir=sd)
+    r = _run_cli("state", "snapshot", "--name", "default", state_dir=sd)
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     assert payload["cmd"] == "state-snapshot"
@@ -77,7 +94,10 @@ def test_cli_state_snapshot():
 
 
 def test_cli_state_snapshots_list():
-    r = _run_cli("state", "snapshots", "--name", "default")
+    sd = _state_dir()
+    _run_cli("state", "init", "--xlsx", str(XLSX), state_dir=sd)
+    _run_cli("state", "snapshot", "--name", "default", state_dir=sd)
+    r = _run_cli("state", "snapshots", "--name", "default", state_dir=sd)
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     assert payload["cmd"] == "state-snapshots-list"
@@ -86,12 +106,14 @@ def test_cli_state_snapshots_list():
 
 
 def test_cli_state_restore():
+    sd = _state_dir()
+    _run_cli("state", "init", "--xlsx", str(XLSX), state_dir=sd)
     # Take a snapshot first
-    r0 = _run_cli("state", "snapshot", "--name", "default")
+    r0 = _run_cli("state", "snapshot", "--name", "default", state_dir=sd)
     assert r0.returncode == 0, r0.stderr
     snap_id = json.loads(r0.stdout)["snapshot_id"]
     # Restore it
-    r = _run_cli("state", "restore", snap_id, "--name", "default")
+    r = _run_cli("state", "restore", snap_id, "--name", "default", state_dir=sd)
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     assert payload["cmd"] == "state-restore"
@@ -227,10 +249,10 @@ def test_cli_purchase_suggest_json():
 
 def test_cli_auto_load_state_xlsx():
     """Commands should auto-load xlsx from state when not provided."""
-    # Ensure state is set
-    _run_cli("state", "init", "--xlsx", str(XLSX))
+    sd = _state_dir()
+    _run_cli("state", "init", "--xlsx", str(XLSX), state_dir=sd)
     # sku-list without explicit xlsx should work
-    r = _run_cli("sku-list", "--basis", "factory", "--limit", "3", "--format", "json")
+    r = _run_cli("sku-list", "--basis", "factory", "--limit", "3", "--format", "json", state_dir=sd)
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     assert payload["count"] >= 1
@@ -254,11 +276,12 @@ def test_cli_json_stderr_clean():
 
 def test_cli_exit_code_2_on_validation_errors():
     """profit-oracle with strict thresholds should exit 2 when violations found."""
+    sd = _state_dir()
     r = _run_cli("profit-oracle", str(XLSX), "--basis", "both",
                  "--only-status", "上线",
                  "--margin-delta-abs", "1e-8",  # extremely strict
                  "--rmb-delta-abs", "0.001",
-                 "--top", "3", "--format", "json")
+                 "--top", "3", "--format", "json", state_dir=sd)
     # exit_code field in payload tells us if violations were found
     payload = json.loads(r.stdout)
     # If there are violations, exit code should be 2
