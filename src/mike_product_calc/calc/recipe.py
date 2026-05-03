@@ -123,7 +123,6 @@ def get_semi_product_recipes(sheets: Dict[str, pd.DataFrame]) -> Dict[str, List[
         semi_col = _find_col(df, "品名")
         ing_col = _find_col(df, "配料")
         qty_col = _find_col(df, "用量")
-        unit_cost_col = _find_col(df, "单位成本")
         factory_total_col = _find_col(df, "总成本")
         store_total_col = _find_col(df, "门店总成本")
 
