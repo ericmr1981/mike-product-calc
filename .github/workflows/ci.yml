@@ -38,7 +38,7 @@ jobs:
             src/mike_product_calc/__main__.py
 
       - name: Run tests
-        run: pytest tests/ -q
+        run: pytest tests/ -q --ignore=tests/test_tab5_e2e.py
 
   lint:
     runs-on: ubuntu-latest

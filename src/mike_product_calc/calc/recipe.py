@@ -277,7 +277,6 @@ def build_recipe_table(
             for sub in sub_items:
                 sub_name = sub["item"]
                 sub_qty = sub["usage_qty"]
-                sub_unit = sub.get("usage_unit", "")
                 sub_brand_cost = brand_cost_map.get(sub_name, 0.0)
                 sub_spec = spec_map.get(sub_name, "")
 

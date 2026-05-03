@@ -7,5 +7,5 @@ Currently focuses on:
 More calculation engines will be added incrementally (profit, BOM expansion, scenarios, etc.).
 """
 
-from .version import __version__
+from .version import __version__ as __version__  # noqa: F401
 
