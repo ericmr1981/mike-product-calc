@@ -641,7 +641,7 @@ with tab4:
         st.info("暂无配方明细数据。")
     else:
         # Editable store_price column using data_editor
-        editor_cols = ["item", "usage_qty", "cost", "spec", "store_price", "brand_cost", "profit_rate"]
+        editor_cols = ["item", "usage_qty", "cost", "spec", "store_price", "brand_cost", "profit_rate", "is_semi"]
         editor_df = recipe_df[editor_cols].copy() if all(c in recipe_df.columns for c in editor_cols) else recipe_df
 
         # Add hierarchy indentation to item names
@@ -663,6 +663,7 @@ with tab4:
                 "store_price": st.column_config.NumberColumn("门店价格", format="%.2f"),
                 "brand_cost": st.column_config.NumberColumn("品牌成本", disabled=True, format="%.2f"),
                 "profit_rate": st.column_config.NumberColumn("利润率", disabled=True, format="%.2f"),
+                "is_semi": st.column_config.Column("类型", disabled=True, width="small"),
             },
         )
 
