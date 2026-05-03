@@ -44,12 +44,14 @@ def _find_col(df: pd.DataFrame, *candidates: str) -> Optional[str]:
 
 
 def get_brand_cost_map(sheets: Dict[str, pd.DataFrame]) -> Dict[str, float]:
-    """Read brand cost from 总原料成本表. Returns {material_name: brand_cost}."""
+    """Read 加价前单价 (brand cost) from 总原料成本表.
+    Returns {material_name: brand_cost}.
+    """
     df = sheets.get("总原料成本表")
     if df is None:
         return {}
     name_col = _find_col(df, "品项名称")
-    cost_col = _find_col(df, "原料价格", "单价", "品牌成本")
+    cost_col = _find_col(df, "加价前单价")
     if not name_col or not cost_col:
         return {}
     out = {}
@@ -64,13 +66,38 @@ def get_brand_cost_map(sheets: Dict[str, pd.DataFrame]) -> Dict[str, float]:
     return out
 
 
-def get_brand_spec_map(sheets: Dict[str, pd.DataFrame]) -> Dict[str, str]:
-    """Read spec/unit from 总原料成本表. Returns {material_name: spec_string}."""
+def get_store_price_map(sheets: Dict[str, pd.DataFrame]) -> Dict[str, float]:
+    """Read 加价后单价 (store purchase price) from 总原料成本表.
+    Returns {material_name: store_price}.
+    """
     df = sheets.get("总原料成本表")
     if df is None:
         return {}
     name_col = _find_col(df, "品项名称")
-    spec_col = _find_col(df, "规格", "单位量", "单位数量")
+    price_col = _find_col(df, "加价后单价")
+    if not name_col or not price_col:
+        return {}
+    out = {}
+    for _, row in df.iterrows():
+        name = str(row.get(name_col, "")).strip()
+        if not name:
+            continue
+        try:
+            out[name] = float(row[price_col])
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def get_brand_spec_map(sheets: Dict[str, pd.DataFrame]) -> Dict[str, str]:
+    """Read 单位量 (spec/unit qty) from 总原料成本表.
+    Returns {material_name: spec_string}.
+    """
+    df = sheets.get("总原料成本表")
+    if df is None:
+        return {}
+    name_col = _find_col(df, "品项名称")
+    spec_col = _find_col(df, "单位量")
     if not name_col or not spec_col:
         return {}
     out = {}
@@ -78,7 +105,7 @@ def get_brand_spec_map(sheets: Dict[str, pd.DataFrame]) -> Dict[str, str]:
         name = str(row.get(name_col, "")).strip()
         if not name:
             continue
-        spec = str(row.get(spec_col, "")).strip()
+        spec = str(row.get(spec_col, ""))
         if spec and spec != "nan":
             out[name] = spec
     return out
@@ -182,6 +209,7 @@ def build_recipe_table(
         return pd.DataFrame()
 
     brand_cost_map = get_brand_cost_map(sheets)
+    store_price_map = get_store_price_map(sheets)
     spec_map = get_brand_spec_map(sheets)
     semi_recipes = get_semi_product_recipes(sheets)
 
@@ -203,7 +231,7 @@ def build_recipe_table(
 
         if not is_semi:
             # Direct ingredient
-            store_price = brand_cost if brand_cost > 0 else cost_val
+            store_price = store_price_map.get(item, brand_cost or cost_val)
             spec_parsed = _parse_spec(spec)
             if spec_parsed and spec_parsed > 0 and usage_qty > 0:
                 calculated_cost = usage_qty * (store_price / spec_parsed)
@@ -253,7 +281,7 @@ def build_recipe_table(
                 sub_spec = spec_map.get(sub_name, "")
 
                 # Default store_price = brand_cost
-                sub_store_price = sub_brand_cost if sub_brand_cost > 0 else 0.0
+                sub_store_price = store_price_map.get(sub_name, sub_brand_cost or 0.0)
                 sub_spec_parsed = _parse_spec(sub_spec)
                 sub_sku_cost = 0.0
 

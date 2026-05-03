@@ -7,6 +7,7 @@ import pytest
 from mike_product_calc.calc.recipe import (
     get_semi_product_recipes,
     get_brand_cost_map,
+    get_store_price_map,
     get_brand_spec_map,
     build_recipe_table,
     _parse_spec,
@@ -93,11 +94,26 @@ def test_get_brand_cost_map_mock():
     sheets = {
         "总原料成本表": pd.DataFrame({
             "品项名称": ["原料A", "原料B"],
-            "原料价格": [10.5, 20.3],
+            "加价前单价": [10.5, 20.3],
         })
     }
     result = get_brand_cost_map(sheets)
     assert result == {"原料A": 10.5, "原料B": 20.3}
+
+
+def test_get_store_price_map_mock():
+    sheets = {
+        "总原料成本表": pd.DataFrame({
+            "品项名称": ["原料A", "原料B"],
+            "加价后单价": [15.0, 30.5],
+        })
+    }
+    result = get_store_price_map(sheets)
+    assert result == {"原料A": 15.0, "原料B": 30.5}
+
+
+def test_get_store_price_map_missing_sheet():
+    assert get_store_price_map({}) == {}
 
 
 def test_get_brand_cost_map_mock_missing_sheet():
@@ -113,7 +129,7 @@ def test_get_brand_spec_map_mock():
     sheets = {
         "总原料成本表": pd.DataFrame({
             "品项名称": ["原料A", "原料B"],
-            "规格": ["1 kg", "500 g"],
+            "单位量": ["1 kg", "500 g"],
         })
     }
     result = get_brand_spec_map(sheets)
