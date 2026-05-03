@@ -730,41 +730,30 @@ with tab4:
         col_chart1, col_chart2 = st.columns(2)
 
         with col_chart1:
-            # SKU cost breakdown: use the recipe table (level != 2 rows)
-            sku_cost_data = recalc_data
-            sku_chart_rows = [r for r in sku_cost_data if r.get("level") != 2]
+            # SKU cost breakdown: group by item (level != 2)
+            sku_chart_rows = [r for r in recalc_data if r.get("level") != 2 and float(r.get("cost", 0) or 0) > 0]
             if sku_chart_rows:
-                categories = {"原料": 0.0, "半成品": 0.0, "包材": 0.0}
-                for r in sku_chart_rows:
-                    item = str(r.get("item", ""))
-                    cost = float(r.get("cost", 0) or 0)
-                    # Determine category based on context
-                    if r.get("is_semi") or r.get("level") == 1:
-                        categories["半成品"] += cost
-                    elif any(kw in item for kw in ["碗", "杯", "勺", "卡", "托", "袋", "盒"]):
-                        categories["包材"] += cost
-                    else:
-                        categories["原料"] += cost
-                sku_chart_df = pd.DataFrame([
-                    {"类别": k, "成本": round(v, 2)} for k, v in categories.items() if v > 0
+                sku_df = pd.DataFrame([
+                    {"项目": r["item"], "成本": float(r["cost"])} for r in sku_chart_rows
                 ])
-                if not sku_chart_df.empty:
-                    fig1 = px.pie(sku_chart_df, values="成本", names="类别", title="SKU 成本拆解")
-                    fig1.update_traces(textinfo="label+percent", textposition="outside")
-                    st.plotly_chart(fig1, use_container_width=True)
+                fig1 = px.pie(sku_df, values="成本", names="项目", title="SKU 成本拆解",
+                              color_discrete_sequence=px.colors.qualitative.Set3)
+                fig1.update_traces(textposition="inside", textinfo="label+percent")
+                fig1.update_layout(height=280, margin=dict(t=30, b=0, l=0, r=0))
+                st.plotly_chart(fig1, use_container_width=True)
 
         with col_chart2:
             # Semi-product cost breakdown: sub-ingredient rows (level == 2)
-            sub_rows = [r for r in sku_cost_data if r.get("level") == 2]
+            sub_rows = [r for r in recalc_data if r.get("level") == 2 and float(r.get("cost", 0) or 0) > 0]
             if sub_rows:
-                semi_chart_df = pd.DataFrame([
-                    {"原料": r["item"], "成本": round(float(r.get("cost", 0) or 0), 2)}
-                    for r in sub_rows if float(r.get("cost", 0) or 0) > 0
+                semi_df = pd.DataFrame([
+                    {"项目": r["item"], "成本": float(r["cost"])} for r in sub_rows
                 ])
-                if not semi_chart_df.empty:
-                    fig2 = px.pie(semi_chart_df, values="成本", names="原料", title="半成品成本拆解")
-                    fig2.update_traces(textinfo="label+percent", textposition="outside")
-                    st.plotly_chart(fig2, use_container_width=True)
+                fig2 = px.pie(semi_df, values="成本", names="项目", title="半成品成本拆解",
+                              color_discrete_sequence=px.colors.qualitative.Set3)
+                fig2.update_traces(textposition="inside", textinfo="label+percent")
+                fig2.update_layout(height=280, margin=dict(t=30, b=0, l=0, r=0))
+                st.plotly_chart(fig2, use_container_width=True)
 
         # ── Scenario management ──────────────────────────────────────
         st.divider()
