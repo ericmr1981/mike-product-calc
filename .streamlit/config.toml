@@ -1,0 +1,13 @@
+[theme]
+primaryColor = "#F39C12"  # Example primary color
+backgroundColor = "#FFFFFF"  # Background color
+secondaryBackgroundColor = "#F0F2F5"  # Secondary background color
+textColor = "#000000"  # Text color
+font = "sans serif"  # Font style
+
+[logger]
+level = "debug"  # Logging level
+logFile = "streamlit.log"  # Log file name
+
+[client]
+caching = true  # Enable caching
