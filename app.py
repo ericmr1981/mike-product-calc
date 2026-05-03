@@ -743,7 +743,7 @@ with tab4:
                                    showlegend=True, legendgroup="sku",
                                    textfont=dict(color="#333", size=11),
                                    marker=dict(line=dict(color="white", width=2)),
-                                   domain=dict(x=[0, 0.7]))
+                                   domain=dict(x=[0.08, 0.78]))
                 fig1.update_layout(
                     height=260, margin=dict(t=10, b=10, l=0, r=0),
                     legend=dict(orientation="v", yanchor="middle", y=0.5,
@@ -767,7 +767,7 @@ with tab4:
                                    showlegend=True,
                                    textfont=dict(color="#333", size=11),
                                    marker=dict(line=dict(color="white", width=2)),
-                                   domain=dict(x=[0, 0.7]))
+                                   domain=dict(x=[0.08, 0.78]))
                 fig2.update_layout(
                     height=260, margin=dict(t=10, b=10, l=0, r=0),
                     legend=dict(orientation="v", yanchor="middle", y=0.5,
