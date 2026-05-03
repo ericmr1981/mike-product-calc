@@ -537,7 +537,7 @@ with tab2:
                             "spec": st.column_config.TextColumn("规格"),
                             "store_price": st.column_config.NumberColumn("门店价格", format="%.2f"),
                             "brand_cost": st.column_config.NumberColumn("品牌成本", format="%.2f"),
-                            "profit_rate": st.column_config.NumberColumn("利润率", format="%.2f"),
+                        "profit_rate": st.column_config.NumberColumn("利润率(%)", format="%.1f"),
                         },
                     )
 
@@ -641,7 +641,7 @@ with tab4:
         st.info("暂无配方明细数据。")
     else:
         # Editable store_price column using data_editor
-        editor_cols = ["item", "usage_qty", "cost", "spec", "store_price", "brand_cost", "profit_rate", "is_semi"]
+        editor_cols = ["item", "usage_qty", "cost", "spec", "store_price", "brand_cost", "profit_rate", "level", "is_semi"]
         editor_df = recipe_df[editor_cols].copy() if all(c in recipe_df.columns for c in editor_cols) else recipe_df
 
         # Add hierarchy indentation to item names
@@ -662,7 +662,7 @@ with tab4:
                 "spec": st.column_config.TextColumn("规格", disabled=True),
                 "store_price": st.column_config.NumberColumn("门店价格", format="%.2f"),
                 "brand_cost": st.column_config.NumberColumn("品牌成本", disabled=True, format="%.2f"),
-                "profit_rate": st.column_config.NumberColumn("利润率", disabled=True, format="%.2f"),
+                "profit_rate": st.column_config.NumberColumn("利润率(%)", disabled=True, format="%.1f"),
                 "is_semi": st.column_config.Column("类型", disabled=True, width="small"),
             },
         )
@@ -671,8 +671,8 @@ with tab4:
         total_cost = 0.0
         recalc_data = edited.to_dict("records")
         for row in recalc_data:
-            # Skip semi-product summary rows (level=1 = is_semi rows) — costs are sum of sub-items
-            if row.get("is_semi", False):
+            # Skip sub-ingredient rows (level=2) — their costs are included in the semi-parent row
+            if row.get("level") == 2:
                 continue
 
             orig_cost = row.get("cost", 0) or 0
@@ -697,7 +697,7 @@ with tab4:
                 bc_f = float(row.get("brand_cost", 0) or 0)
             except (TypeError, ValueError):
                 bc_f = 0
-            row["profit_rate"] = round(_calc_profit_rate(new_sp_f, bc_f), 4)
+            row["profit_rate"] = round(_calc_profit_rate(new_sp_f, bc_f) * 100, 1)
 
             row_cost = row.get("cost", 0) or 0
             try:
@@ -734,7 +734,7 @@ with tab4:
             if st.button("保存方案", use_container_width=True):
                 adjustments = []
                 for row in recalc_data:
-                    if row.get("is_semi", False):
+                    if row.get("level") == 2:
                         continue
                     sp = row.get("store_price")
                     name = str(row.get("item", "")).strip()

@@ -180,9 +180,10 @@ def _lookup_usage_map(
         # Iterate ALL matching rows — products may have multiple ingredient rows
         for _, match in df[mask].iterrows():
             main_mat = str(match.get("主原料", "")).strip()
-            ing = str(match.get("配料", "")).strip()
+            raw_ing = str(match.get("配料", "")).strip()
+            ing = raw_ing if raw_ing and raw_ing.lower() != "nan" else ""
             item = ing or main_mat
-            if not item:
+            if not item or item.lower() == "nan":
                 continue
             qty = _to_float(match.get("用量")) or 0.0
             unit = str(match.get("单位", "")).strip() or ""
@@ -238,7 +239,7 @@ def build_recipe_table(
             else:
                 calculated_cost = cost_val
 
-            profit_rate = _calc_profit_rate(store_price, brand_cost)
+            profit_rate = round(_calc_profit_rate(store_price, brand_cost) * 100, 1)
 
             rows.append(RecipeRow(
                 item=item,
@@ -248,7 +249,7 @@ def build_recipe_table(
                 spec=spec,
                 store_price=store_price,
                 brand_cost=round(brand_cost, 4),
-                profit_rate=round(profit_rate, 4),
+                profit_rate=profit_rate,
                 level=LEVEL_DIRECT,
                 is_semi=False,
             ))
@@ -292,27 +293,27 @@ def build_recipe_table(
                     sub_sku_cost = sub_cost_in_batch * scale_factor
 
                 semi_cost += sub_sku_cost
-                sub_profit_rate = _calc_profit_rate(sub_store_price, sub_brand_cost)
+                sub_profit_rate = round(_calc_profit_rate(sub_store_price, sub_brand_cost) * 100, 1)
 
                 sub_rows.append(RecipeRow(
                     item=sub_name,
-                    usage_qty=sub_qty,
-                    usage_unit=sub_unit,
-                    cost=round(sub_sku_cost, 4),
+                    usage_qty=0,
+                    usage_unit="",
+                    cost=0.0,
                     spec=sub_spec,
                     store_price=sub_store_price,
                     brand_cost=round(sub_brand_cost, 4),
-                    profit_rate=round(sub_profit_rate, 4),
+                    profit_rate=sub_profit_rate,
                     level=LEVEL_SUB,
                     is_semi=False,
                 ))
 
-            # Main semi row (summary)
+            # Main semi row (summary) — usage/cost from 产品出品表
             rows.append(RecipeRow(
                 item=item,
-                usage_qty=0,
-                usage_unit="",
-                cost=round(semi_cost, 4),
+                usage_qty=usage_qty,
+                usage_unit=usage_unit,
+                cost=round(cost_val, 4),
                 spec="",
                 store_price=0,
                 brand_cost=0,
