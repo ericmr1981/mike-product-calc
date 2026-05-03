@@ -532,8 +532,8 @@ with tab2:
                         use_container_width=True,
                         height=360,
                         column_config={
-                            "usage_qty": st.column_config.NumberColumn("用量", format="%.3f"),
-                            "cost": st.column_config.NumberColumn("成本", format="%.4f"),
+                            "usage_qty": st.column_config.NumberColumn("用量", format="%.1f"),
+                            "cost": st.column_config.NumberColumn("成本", format="%.2f"),
                             "spec": st.column_config.TextColumn("规格"),
                             "store_price": st.column_config.NumberColumn("门店价格", format="%.2f"),
                             "brand_cost": st.column_config.NumberColumn("品牌成本", format="%.2f"),
@@ -624,7 +624,7 @@ with tab4:
         column_config={
             "product_key": "SKU",
             "price": st.column_config.NumberColumn("定价", format="%.2f"),
-            "cost": st.column_config.NumberColumn("成本", format="%.4f"),
+            "cost": st.column_config.NumberColumn("成本", format="%.2f"),
             "gross_profit": st.column_config.NumberColumn("毛利", format="%.2f"),
             "gross_margin_pct": "毛利率",
         },
@@ -657,8 +657,8 @@ with tab4:
             height=400,
             column_config={
                 "item": st.column_config.TextColumn("项目", disabled=True),
-                "usage_qty": st.column_config.NumberColumn("用量", disabled=True, format="%.3f"),
-                "cost": st.column_config.NumberColumn("成本", disabled=True, format="%.4f"),
+                "usage_qty": st.column_config.NumberColumn("用量", disabled=True, format="%.1f"),
+                "cost": st.column_config.NumberColumn("成本", disabled=True, format="%.2f"),
                 "spec": st.column_config.TextColumn("规格", disabled=True),
                 "store_price": st.column_config.NumberColumn("门店价格", format="%.2f"),
                 "brand_cost": st.column_config.NumberColumn("品牌成本", disabled=True, format="%.2f"),
@@ -689,7 +689,7 @@ with tab4:
             # (direct: cost = qty * store_price/spec; sub-ingredient: cost = batch_qty * store_price/spec * scale)
             # So new_cost = orig_cost * (new_store_price / orig_store_price)
             if orig_sp_f > 0 and abs(orig_sp_f - new_sp_f) > 0.0001:
-                row["cost"] = round(float(orig_cost) * (new_sp_f / orig_sp_f), 4)
+                row["cost"] = round(float(orig_cost) * (new_sp_f / orig_sp_f), 2)
             # else keep original cost
 
             # Recalculate profit_rate

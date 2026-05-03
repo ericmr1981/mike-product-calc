@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: mike-product-calc
+Version: 0.2.0
+Summary: 蜜可诗产品经营决策台
+Requires-Python: >=3.9

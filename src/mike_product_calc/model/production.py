@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Literal
+from typing import List, Literal
 
 PlanType = Literal["sales", "production"]
 

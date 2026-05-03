@@ -307,16 +307,16 @@ def build_recipe_table(
                     is_semi=False,
                 ))
 
-            # Main semi row (summary) — usage/cost from 产品出品表
+            # Main semi row (summary) — usage/cost from 产品出品表, pricing from 总原料成本表
             rows.append(RecipeRow(
                 item=item,
                 usage_qty=usage_qty,
                 usage_unit=usage_unit,
                 cost=round(cost_val, 4),
-                spec="",
-                store_price=0,
-                brand_cost=0,
-                profit_rate=0,
+                spec=spec,
+                store_price=store_price_map.get(item, 0.0),
+                brand_cost=round(brand_cost, 4),
+                profit_rate=round(_calc_profit_rate(store_price_map.get(item, 0.0), brand_cost) * 100, 1),
                 level=LEVEL_SEMI,
                 is_semi=True,
             ))

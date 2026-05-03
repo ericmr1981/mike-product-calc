@@ -32,9 +32,9 @@ import argparse
 import json
 import sys
 from dataclasses import asdict
-from datetime import date, datetime, timedelta
+from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -55,11 +55,9 @@ from mike_product_calc.calc.profit_oracle import (
 from mike_product_calc.calc.purchase_suggestion import build_purchase_list
 from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.data.validator import issues_to_dataframe, issues_to_report, validate_workbook
-from mike_product_calc.model.production import ProductionPlan, ProductionRow
-from mike_product_calc.state import MpcState, StateStore, get_store, _ensure_xlsx
+from mike_product_calc.state import MpcState, get_store
 from mike_product_calc.data.upload import (
     UploadRegistry,
-    UploadRegistryItem,
     DuplicateFileError,
 )
 

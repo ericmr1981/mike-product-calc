@@ -180,7 +180,7 @@ class StateStore:
         return self._snapshots_dir() / f"{safe}__{ts}.json"
 
     def _snapshot_name_to_path(self, name: str) -> Optional[Path]:
-        for p in self._snapshots_dir().glob(f"*.json"):
+        for p in self._snapshots_dir().glob("*.json"):
             if name in p.stem:
                 return p
         return None

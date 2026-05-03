@@ -14,7 +14,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 
-from .profit import ProfitBasis, _build_product_key, _to_float, sku_profit_table
+from .profit import ProfitBasis, _build_product_key, sku_profit_table
 from mike_product_calc.data.shared import to_float
 
 

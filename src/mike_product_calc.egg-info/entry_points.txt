@@ -1,0 +1,3 @@
+[console_scripts]
+mike-product-calc = mike_product_calc.cli:main
+mpc = mike_product_calc.cli:main

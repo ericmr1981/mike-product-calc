@@ -12,7 +12,7 @@ Supports: loss rate, safety stock, minimum purchase unit, batch rounding,
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
