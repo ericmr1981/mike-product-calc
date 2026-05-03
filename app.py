@@ -663,7 +663,8 @@ with tab4:
                 "store_price": st.column_config.NumberColumn("门店价格", format="%.2f"),
                 "brand_cost": st.column_config.NumberColumn("品牌成本", disabled=True, format="%.2f"),
                 "profit_rate": st.column_config.NumberColumn("利润率(%)", disabled=True, format="%.1f"),
-                "is_semi": st.column_config.Column("类型", disabled=True, width="small"),
+                "level": None,
+                "is_semi": None,
             },
         )
 
