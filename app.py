@@ -644,6 +644,13 @@ with tab4:
         editor_cols = ["item", "usage_qty", "cost", "spec", "store_price", "brand_cost", "profit_rate"]
         editor_df = recipe_df[editor_cols].copy() if all(c in recipe_df.columns for c in editor_cols) else recipe_df
 
+        # Add hierarchy indentation to item names
+        if "level" in recipe_df.columns:
+            editor_df["item"] = recipe_df.apply(
+                lambda r: "↳ " + str(r["item"]) if r["level"] == 2 else str(r["item"]),
+                axis=1,
+            )
+
         edited = st.data_editor(
             editor_df,
             use_container_width=True,
