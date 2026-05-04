@@ -499,12 +499,28 @@ with tab3:
             row["profit_rate"] = round(_calc_profit_rate(new_sp_f, bc_f) * 100, 1)
 
             row_cost = row.get("cost", 0) or 0
-            row_brand_cost = row.get("brand_cost", 0) or 0
             try:
                 total_cost += float(row_cost)
-                brand_cost_total += float(row_brand_cost)
             except (TypeError, ValueError):
                 pass
+
+        # Compute brand cost using store_price × usage_qty / spec (always store-level)
+        brand_cost_total = 0.0
+        for row in recalc_data:
+            if row.get("level") == 2:
+                continue
+            usage_qty = float(row.get("usage_qty", 0) or 0)
+            store_price = float(row.get("store_price", 0) or 0)
+            spec_str = str(row.get("spec", "") or "")
+            if spec_str and spec_str not in ("—", "-", "nan"):
+                spec_val = _parse_spec(spec_str)
+            else:
+                spec_val = None
+            if spec_val and spec_val > 0 and usage_qty > 0 and store_price > 0:
+                row_brand_cost = usage_qty * store_price / spec_val
+            else:
+                row_brand_cost = float(row.get("cost", 0) or 0)
+            brand_cost_total += row_brand_cost
 
         brand_profit = total_cost - brand_cost_total
 
