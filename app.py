@@ -49,6 +49,30 @@ st.markdown("""
     /* Viewport: full-screen, no scroll outside app */
     .stApp {min-height: 100dvh;}
 
+    /* Reduce header top padding */
+    .stHeadingContainer {padding-top: 0 !important; margin-top: 0 !important;}
+    section[data-testid="stBlockContainer"] > div:first-child {padding-top: 0 !important;}
+    .block-container {padding-top: 0.5rem !important;}
+
+    /* Help tip hover card */
+    .help-tip {position: relative; display: inline-flex; cursor: help; margin-left: 4px; vertical-align: middle;}
+    .help-icon {font-size: 18px; color: #888;}
+    .help-tip:hover .help-text {visibility: visible; opacity: 1;}
+    .help-text {
+        visibility: hidden; opacity: 0; width: 340px;
+        background: #2d2d2d; color: #f0f0f0; padding: 12px 16px; border-radius: 10px;
+        font-size: 13px; line-height: 1.6; white-space: pre-wrap;
+        position: absolute; bottom: 150%; left: 50%; transform: translateX(-50%);
+        z-index: 9999; box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+        transition: opacity 0.2s ease;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        pointer-events: none;
+    }
+    .help-text::after {
+        content: ''; position: absolute; top: 100%; left: 50%; margin-left: -5px;
+        border: 5px solid transparent; border-top-color: #2d2d2d;
+    }
+
     /* Responsive column collapse */
     @media (max-width: 768px) {
         .stColumn, div[data-testid="column"] {
@@ -81,8 +105,21 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("蜜可诗产品经营决策台")
+st.title("Gelato Miiix Data Foundation")
 st.caption("当前版本：Excel 解析 / 校验、SKU 毛利分析（双口径）、F-002 oracle、F-003 第一版反推定价。")
+
+
+def _heading_with_help(heading: str, help_text: str):
+    """Subheader with a hover-triggered help card (ⓘ) on the right."""
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
+        f'<h3 style="margin:0;font-size:1.2rem;font-weight:600;">{heading}</h3>'
+        f'<div class="help-tip"><span class="help-icon">ⓘ</span>'
+        f'<span class="help-text">{help_text}</span></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
 
 # ── 上传文件持久化（磁盘级，可删除/替换）────────────────────────────────────
 UPLOAD_DIR = ROOT / "data" / "uploads"
@@ -272,11 +309,11 @@ sheet_names = list(wb.sheets.keys())
 tab1, tab2, tab3, tab4 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划"])
 
 with tab1:
-    st.info("📌 **功能说明**：上传 Excel 文件后，系统自动解析并校验所有 sheet。\n"
-             "**使用方法**：上传蜜可诗产品库.xlsx，等待解析完成后查看统计与校验报告。\n"
-             "**字段含义**：Sheet 数 = 工作簿中 sheet 总数；Issues = 所有校验问题数（含警告）；"
-             "Errors = 高严重性问题（需优先处理）。")
-    st.subheader("Workbook 概览")
+    _heading_with_help("Workbook 概览",
+        "📌 **功能说明**：上传 Excel 文件后，系统自动解析并校验所有 sheet。\n"
+        "**使用方法**：上传蜜可诗产品库.xlsx，等待解析完成后查看统计与校验报告。\n"
+        "**字段含义**：Sheet 数 = 工作簿中 sheet 总数；Issues = 所有校验问题数（含警告）；"
+        "Errors = 高严重性问题（需优先处理）。")
     col1, col2, col3 = st.columns(3)
     col1.metric("Sheet 数", len(sheet_names))
     col2.metric("Issues", len(issues))
@@ -298,10 +335,10 @@ with tab1:
 
 
 with tab2:
-    st.info("📌 **功能说明**：浏览工作簿中任意 sheet 的原始数据。\n"
-             "**使用方法**：下拉选择 sheet 名称，查看行列数据。\n"
-             "**字段含义**：Rows=数据行数；Cols=列数；表格内容即对应 sheet 的原始数据。")
-    st.subheader("Sheet 浏览")
+    _heading_with_help("Sheet 浏览",
+        "📌 **功能说明**：浏览工作簿中任意 sheet 的原始数据。\n"
+        "**使用方法**：下拉选择 sheet 名称，查看行列数据。\n"
+        "**字段含义**：Rows=数据行数；Cols=列数；表格内容即对应 sheet 的原始数据。")
     selected = st.selectbox("选择 sheet", sheet_names)
     df = wb.sheets[selected]
     st.write(f"Rows: {df.shape[0]} | Cols: {df.shape[1]}")
@@ -314,9 +351,9 @@ if "sim_store" not in st.session_state:
 store: ScenarioStore = st.session_state["sim_store"]
 
 with tab3:
-    st.info("功能说明：选产品 → 查看 SKU 规格毛利 → 展开配方明细，调整门店价格/售价，实时看毛利变化。\n"
-             "使用方法：选择产品 → 选 SKU 规格 → 在配方表中调整门店价格或在右侧调售价 → 保存方案对比。")
-    st.subheader("原料价格模拟器")
+    _heading_with_help("原料价格模拟器",
+        "**功能说明**：选产品 → 查看 SKU 规格毛利 → 展开配方明细，调整门店价格/售价，实时看毛利变化。\n"
+        "**使用方法**：选择产品 → 选 SKU 规格 → 在配方表中调整门店价格或在右侧调售价 → 保存方案对比。")
     st.caption("三步递进：选择产品 → SKU 规格毛利 → 配方明细与调价")
 
     # ── Step 1: Select product ──────────────────────────────────────
@@ -430,6 +467,7 @@ with tab3:
 
         # Recalculate costs based on edited store_price
         total_cost = 0.0
+        brand_cost_total = 0.0
         recalc_data = edited.to_dict("records")
         for row in recalc_data:
             # Skip sub-ingredient rows (level=2) — their costs are included in the semi-parent row
@@ -461,17 +499,21 @@ with tab3:
             row["profit_rate"] = round(_calc_profit_rate(new_sp_f, bc_f) * 100, 1)
 
             row_cost = row.get("cost", 0) or 0
+            row_brand_cost = row.get("brand_cost", 0) or 0
             try:
                 total_cost += float(row_cost)
+                brand_cost_total += float(row_brand_cost)
             except (TypeError, ValueError):
                 pass
+
+        brand_profit = total_cost - brand_cost_total
 
         # ── Pricing & margin KPI cards ──────────────────────────────
         default_price = float(sku_df[sku_df["product_key"] == selected_sku]["price"].iloc[0]) if not sku_df[sku_df["product_key"] == selected_sku].empty else 0.0
         price_key = f"t4_sku_price_{selected_sku}"
         current_price = st.session_state.get(price_key, default_price)
 
-        col_p1, col_p2, col_p3 = st.columns(3)
+        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
         with col_p1:
             new_price = st.number_input("门店售价（元）", value=float(current_price), step=1.0, min_value=0.0, key=f"t4_price_{selected_sku}")
             st.session_state[price_key] = new_price
@@ -479,6 +521,8 @@ with tab3:
             gross_profit = new_price - total_cost
             st.metric("总成本（元）", f"{total_cost:.2f}")
         with col_p3:
+            st.metric("品牌成本（元）", f"{brand_cost_total:.2f}", delta=f"品牌利润 {brand_profit:.2f}")
+        with col_p4:
             margin_rate = (gross_profit / new_price * 100) if new_price > 0 else 0
             st.metric("毛利", f"{gross_profit:.2f} 元", delta=f"{margin_rate:.1f}%")
 
@@ -646,10 +690,11 @@ def _init_session():
 
 
 with tab4:
-    st.info("📌 **功能说明**：① 录入销售计划 → ② 生成生产计划 → ③ 展开 BOM 计算原料需求 → ④ 成本核算。\n"
-             "**使用方法**：从上至下按步骤操作。\n"
-             "**销售SKU**=产品毛利表成品；**生产项**=配方中的冰激淋基底。")
     _init_session()
+    _heading_with_help("📋 Step 1: 销售计划录入",
+        "📌 **功能说明**：① 录入销售计划 → ② 生成生产计划 → ③ 展开 BOM 计算原料需求 → ④ 成本核算。\n"
+        "**使用方法**：从上至下按步骤操作。\n"
+        "**销售SKU**=产品毛利表成品；**生产项**=配方中的冰激淋基底。")
     plans: dict = st.session_state["production_plans"]
     SALES_KEY = "销售计划_当前"
     PROD_KEY = "生产计划_当前"
@@ -657,7 +702,6 @@ with tab4:
     # ════════════════════════════════════════════════════════════════════
     # Step 1: 销售计划录入
     # ════════════════════════════════════════════════════════════════════
-    st.subheader("📋 Step 1: 销售计划录入")
     st.caption("录入成品销售预测 — SKU 来自产品毛利表")
     _saved_sales_msg = st.session_state.pop("_msg_sales_saved", None)
     if _saved_sales_msg:
