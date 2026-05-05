@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 import sys
-import tempfile
-import json
-import hashlib
 from datetime import date, datetime
-import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -29,8 +25,6 @@ from mike_product_calc.calc.prep_engine import (
     gaps_only,
     sales_to_production,
 )
-from mike_product_calc.data.loader import load_workbook
-from mike_product_calc.data.validator import issues_to_dataframe, validate_workbook
 from mike_product_calc.calc.profit import sku_profit_table
 from mike_product_calc.model.production import ProductionRow
 
@@ -121,228 +115,85 @@ def _heading_with_help(heading: str, help_text: str):
     )
 
 
-# ── 上传文件持久化（磁盘级，可删除/替换）────────────────────────────────────
-UPLOAD_DIR = ROOT / "data" / "uploads"
-REGISTRY_PATH = UPLOAD_DIR / "registry.json"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# ── Supabase 初始化 ─────────────────────────────────────────
 
-
-def _sha256_bytes(b: bytes) -> str:
-    return hashlib.sha256(b).hexdigest()
-
-
-def _load_registry() -> list[dict]:
-    if not REGISTRY_PATH.exists():
-        return []
-    try:
-        data = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except Exception:
-        return []
-
-
-def _save_registry(items: list[dict]) -> None:
-    REGISTRY_PATH.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _delete_file(file_id: str) -> None:
-    items = _load_registry()
-    keep: list[dict] = []
-    for it in items:
-        if it.get("id") == file_id:
-            saved = it.get("saved_name")
-            if saved:
-                fp = UPLOAD_DIR / saved
-                if fp.exists():
-                    fp.unlink()
-        else:
-            keep.append(it)
-    _save_registry(keep)
-
-
-def _save_upload(bytes_data: bytes, orig_name: str) -> dict:
-    fid = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{_sha256_bytes(bytes_data)[:10]}"
-    safe_name = orig_name.replace('/', '_').replace('\\', '_')
-    saved_name = f"{fid}__{safe_name}"
-    (UPLOAD_DIR / saved_name).write_bytes(bytes_data)
-    return {
-        "id": fid,
-        "orig_name": orig_name,
-        "saved_name": saved_name,
-        "uploaded_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        "size": len(bytes_data),
-        "sha256": _sha256_bytes(bytes_data),
-    }
-
-
-# UI: file manager
-with st.expander("📁 数据文件管理（永久保存，可删除/替换）", expanded=False):
-    registry = _load_registry()
-
-    # Choose current file
-    labels = ["(请选择)"]
-    id_by_label: dict[str, str] = {"(请选择)": ""}
-    for it in sorted(registry, key=lambda x: x.get('uploaded_at', ''), reverse=True):
-        label = f"{it.get('orig_name','')} | {str(it.get('id',''))[:8]} | {it.get('uploaded_at','')}"
-        labels.append(label)
-        id_by_label[label] = str(it.get('id',''))
-
-    active_id = st.session_state.get('active_file_id', '')
-    # default selection
-    default_label = next((lb for lb, fid in id_by_label.items() if fid == active_id), "(请选择)")
-    selected_label = st.selectbox("当前工作簿", options=labels, index=labels.index(default_label) if default_label in labels else 0)
-    selected_id = id_by_label.get(selected_label, "")
-    if selected_id:
-        st.session_state['active_file_id'] = selected_id
-
-    col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
-    with col_f1:
-        replace_current = st.checkbox('上传后替换当前（自动删除当前文件）', value=False)
-    with col_f2:
-        if st.button('🗑️ 删除当前文件'):
-            if selected_id:
-                _delete_file(selected_id)
-                st.session_state['active_file_id'] = ''
-                st.rerun()
-            else:
-                st.warning('请先选择一个文件再删除')
-    with col_f3:
-        st.write('')
-
-    up = st.file_uploader('📂 上传/新增 蜜可诗产品库.xlsx', type=['xlsx'], key='xlsx_upload')
-    if up is not None:
-        b = up.getvalue()
-        sha = _sha256_bytes(b)
-
-        # Guard: skip if already processed this upload in this session
-        if st.session_state.get('_last_upload_sha') == sha:
-            st.rerun()
-
-        # Deduplicate: if this exact content is already in registry, reuse it
-        existing = _load_registry()
-        dup = next((it for it in existing if it.get('sha256') == sha), None)
-        if dup:
-            st.session_state['active_file_id'] = dup['id']
-            st.session_state['_last_upload_sha'] = sha
-            st.warning(f"该文件已存在（{dup['orig_name']}），已选中。")
-            st.rerun()
-
-        entry = _save_upload(b, getattr(up, 'name', 'workbook.xlsx'))
-        items = _load_registry()
-        items.insert(0, entry)
-        _save_registry(items)
-
-        if replace_current and selected_id:
-            _delete_file(selected_id)
-
-        st.session_state['active_file_id'] = entry['id']
-        st.session_state['_last_upload_sha'] = sha
-        st.success(f"已保存：{entry['orig_name']}（{entry['id'][:8]}）")
-        st.rerun()
-
-
-def _resolve_active_workbook() -> tuple[bytes, str, str]:
-    """Return (xlsx_bytes, display_name, resolved_path).
-
-    resolved_path is a real filesystem path usable by CLI/state.
-    """
-
-    # 1) active from registry
-    fid = st.session_state.get('active_file_id', '')
-    if fid:
-        for it in _load_registry():
-            if str(it.get('id')) == str(fid):
-                fp = UPLOAD_DIR / str(it.get('saved_name'))
-                if fp.exists():
-                    return fp.read_bytes(), str(it.get('orig_name') or fp.name), str(fp)
-
-    # 2) fallback: env var
-    _default_xlsx = os.environ.get('MIKE_DEFAULT_XLSX', '')
-    if _default_xlsx and Path(_default_xlsx).exists():
-        p = Path(_default_xlsx)
-        return p.read_bytes(), p.name, str(p)
-
-    # 3) fallback: auto-select the first xlsx in UPLOAD_DIR
-    if UPLOAD_DIR.exists():
-        for candidate in sorted(UPLOAD_DIR.glob('*.xlsx')):
-            if candidate.stat().st_size > 0:
-                entry = {
-                    'id': candidate.stem,
-                    'orig_name': candidate.name,
-                    'saved_name': candidate.name,
-                }
-                return candidate.read_bytes(), candidate.name, str(candidate)
-
-    # 4) fallback: use default xlsx in data/ root
-    for default in sorted(Path('data').glob('*.xlsx')):
-        if default.stat().st_size > 0:
-            return default.read_bytes(), default.name, str(default)
-
-    raise FileNotFoundError('No workbook selected/uploaded')
-
-
+_st_supa = None
+_st_sheets: dict[str, pd.DataFrame] = {}
 try:
-    workbook_bytes, workbook_name, workbook_path = _resolve_active_workbook()
-except FileNotFoundError:
-    st.info('请先在上方上传/选择 xlsx 文件开始。')
+    supabase_url = st.secrets["supabase"]["url"]
+    supabase_key = st.secrets["supabase"]["service_key"]
+    from mike_product_calc.data.supabase_client import MpcSupabaseClient
+    _st_supa = MpcSupabaseClient(supabase_url, supabase_key)
+    from mike_product_calc.data.supabase_adapter import build_sheets
+
+    @st.cache_data(ttl=300, show_spinner="加载数据中...")
+    def _cached_build_sheets(url: str, key: str) -> dict[str, pd.DataFrame]:
+        """Cached wrapper: rebuilds every 5 min or when Supabase data changes."""
+        _c = MpcSupabaseClient(url, key)
+        return build_sheets(_c)
+
+    _st_sheets = _cached_build_sheets(supabase_url, supabase_key)
+except Exception as _e:
+    st.error(f"Supabase 连接失败: {_e}")
     st.stop()
-@st.cache_data(show_spinner=False)
-def _load_and_validate(bytes_data: bytes):
-    with tempfile.TemporaryDirectory() as td:
-        p = Path(td) / "workbook.xlsx"
-        p.write_bytes(bytes_data)
-        wb = load_workbook(p)
-        # wb is WorkbookData; wb.sheets is Dict[str, pd.DataFrame]
-        # validate_workbook expects Dict[str, pd.DataFrame]
-        issues = validate_workbook(wb.sheets)
-        return wb, issues
+
+# Track supabase client and cached data in session state
+if "supabase" not in st.session_state:
+    st.session_state.supabase = _st_supa
+    st.session_state.cached_raw_materials = _st_supa.list_raw_materials()
+    st.session_state.cached_products = _st_supa.list_products()
+    st.session_state.cached_all_recipes = _st_supa.list_all_recipes()
+    st.session_state.cached_all_specs = _st_supa.list_all_serving_specs()
 
 
-with st.spinner("解析中..."):
-    wb, issues = _load_and_validate(workbook_bytes)
+def _full_name(p: dict) -> str:
+    """Return full name with version e.g. '木姜子甜橙 2.0'."""
+    v = p.get("version", "")
+    return f"{p['name']} {v}".strip() if v else p["name"]
 
-sheet_names = list(wb.sheets.keys())
 
-
-# ── CLI/UI shared state (disk) ─────────────────────────────────────────
-
-tab1, tab2, tab3, tab4 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理", "配方管理", "出品规格"])
 
 with tab1:
-    _heading_with_help("Workbook 概览",
-        "📌 **功能说明**：上传 Excel 文件后，系统自动解析并校验所有 sheet。\n"
-        "**使用方法**：上传蜜可诗产品库.xlsx，等待解析完成后查看统计与校验报告。\n"
-        "**字段含义**：Sheet 数 = 工作簿中 sheet 总数；Issues = 所有校验问题数（含警告）；"
-        "Errors = 高严重性问题（需优先处理）。")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Sheet 数", len(sheet_names))
-    col2.metric("Issues", len(issues))
-    col3.metric("Errors", sum(1 for i in issues if i.severity == "error"))
+    _heading_with_help("数据概览",
+        "📌 **功能说明**：查看 Supabase 中所有数据的统计概览。\n"
+        "**数据源**：Supabase (PostgreSQL)")
+    from mike_product_calc.calc.material_mgmt import get_material_stats
+    _rm = st.session_state.cached_raw_materials
+    _prods_c = st.session_state.cached_products
+    _stats = {"total": len(_rm), "active": sum(1 for m in _rm if m.get("status") in ("上线", "已生效")), "inactive": sum(1 for m in _rm if m.get("status") not in ("上线", "已生效")), "by_category": {}}
+    _final = sum(1 for p in _prods_c if p.get("is_final_product"))
+    _specs_count = len(st.session_state.cached_all_specs)
 
-    st.divider()
-
-    st.subheader("数据健康/校验报告")
-    df_issues = issues_to_dataframe(issues)
-    st.dataframe(df_issues, use_container_width=True, height=360, hide_index=True)
-
-    csv = df_issues.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "下载 data_validation_report.csv",
-        data=csv,
-        file_name="data_validation_report.csv",
-        mime="text/csv",
-    )
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("原料总数", _stats["total"])
+    col2.metric("已上线", _stats["active"])
+    col3.metric("产品数", len(_prods))
+    col4.metric("最终成品", _final)
+    col5.metric("出品规格", _specs_count)
 
 
 with tab2:
-    _heading_with_help("Sheet 浏览",
-        "📌 **功能说明**：浏览工作簿中任意 sheet 的原始数据。\n"
-        "**使用方法**：下拉选择 sheet 名称，查看行列数据。\n"
-        "**字段含义**：Rows=数据行数；Cols=列数；表格内容即对应 sheet 的原始数据。")
-    selected = st.selectbox("选择 sheet", sheet_names)
-    df = wb.sheets[selected]
-    st.write(f"Rows: {df.shape[0]} | Cols: {df.shape[1]}")
-    st.dataframe(df.head(200), use_container_width=True, height=420, hide_index=True)
+    _heading_with_help("Supabase 数据浏览",
+        "📌 **功能说明**：浏览 Supabase 中各表的数据。\n"
+        "**使用方式**：下拉选择表名，查看数据内容。")
+    _table_names = {
+        "raw_materials": "原料表",
+        "products": "产品表",
+        "recipes": "配方明细",
+        "serving_specs": "出品规格",
+        "serving_spec_toppings": "出品规格附加配料",
+    }
+    _sel_table = st.selectbox("选择表", options=list(_table_names.keys()),
+        format_func=lambda x: f"{_table_names.get(x, x)} ({x})")
+    try:
+        _table_data = _st_supa._client.table(_sel_table).select("*").limit(200).execute().data
+        if _table_data:
+            st.dataframe(pd.DataFrame(_table_data), use_container_width=True, height=420, hide_index=True)
+        else:
+            st.info("表为空")
+    except Exception as e:
+        st.error(f"读取失败: {e}")
 
 # ── Tab4: 原料价格模拟器（重设计）────────────────────────────────
 
@@ -356,8 +207,11 @@ with tab3:
         "**使用方法**：选择产品 → 选 SKU 规格 → 在配方表中调整门店价格或在右侧调售价 → 保存方案对比。")
     st.caption("三步递进：选择产品 → SKU 规格毛利 → 配方明细与调价")
 
+    # ── Data source: Supabase ──
+    _sheets = _st_sheets
+
     # ── Step 1: Select product ──────────────────────────────────────
-    all_profit = sku_profit_table(wb.sheets, basis="store", only_status=None)
+    all_profit = sku_profit_table(_sheets, basis="store", only_status=None)
     if all_profit.empty:
         st.warning("无可用毛利数据。")
         st.stop()
@@ -385,7 +239,7 @@ with tab3:
         st.stop()
 
     # ── Step 2: SKU specs table (follows selected basis) ───────────
-    profit_df_t4 = sku_profit_table(wb.sheets, basis=basis_t4, only_status=None)
+    profit_df_t4 = sku_profit_table(_sheets, basis=basis_t4, only_status=None)
     skus_for_product = [
         pk for pk in all_pks
         if pk.startswith(selected_product + "|")
@@ -404,12 +258,13 @@ with tab3:
         lambda x: f"{x*100:.1f}%" if pd.notna(x) else "N/A"
     )
 
-    # SKU selector
+    # SKU selector — key includes product name so it resets on product change
     sku_options = display_t4["product_key"].tolist()
     selected_sku = st.selectbox(
         "选择 SKU 查看配方",
         options=sku_options,
         format_func=lambda pk: pk.split("|")[-1] if "|" in pk else pk,
+        key=f"sku_sel_{selected_product}",
     )
 
     # Show the basic SKU table
@@ -432,11 +287,15 @@ with tab3:
     st.markdown(f"##### 配方明细 — {selected_sku.split('|')[-1] if '|' in selected_sku else selected_sku}")
 
     # Build recipe table for the selected basis
-    recipe_df = build_recipe_table(wb.sheets, product_key=selected_sku, basis=basis_t4)
+    @st.cache_data(ttl=60, show_spinner=False)
+    def _get_recipe(sku: str, basis: str) -> pd.DataFrame:
+        return build_recipe_table(_st_sheets, product_key=sku, basis=basis)
+
+    recipe_df = _get_recipe(selected_sku, basis_t4)
     # Build factory-basis recipe for brand cost (only needed when current basis is store)
     factory_cost_map: dict[str, float] = {}
     if basis_t4 != "factory":
-        factory_df = build_recipe_table(wb.sheets, product_key=selected_sku, basis="factory")
+        factory_df = _get_recipe(selected_sku, "factory")
         if not factory_df.empty:
             for _, fr in factory_df.iterrows():
                 if fr.get("level") in (2,):
@@ -650,33 +509,26 @@ with tab3:
                 if va != vb and st.button("对比"):
                     s_a, s_b = store.get(va), store.get(vb)
                     if s_a and s_b:
-                        diff = compare_scenarios(s_a, s_b, wb.sheets, basis=basis_t4)
+                        diff = compare_scenarios(s_a, s_b, _sheets, basis=basis_t4)
                         st.dataframe(diff, use_container_width=True, height=420, hide_index=True)
 # ── Tab5: 产销计划 ────────────────────────────────────────────────────
 
-# Build SKU list from workbook for dropdown
-_profit_df = sku_profit_table(wb.sheets, basis="factory", only_status=None)
+# Build SKU list from Supabase
+_profit_df = sku_profit_table(_st_sheets, basis="factory", only_status=None)
 _all_skus = sorted(_profit_df["product_key"].dropna().unique().tolist())
 
-# Production SKU pool: 配方表品名 + 配方表配料 + 出品表配料
-_production_skus_list: list[str] = []
-for _sname in wb.sheets:
-    if "产品配方表" in _sname or "半成品配方表" in _sname:
-        _df = wb.sheets[_sname]
+# Production SKU pool: extract from already-built sheets (no extra API calls)
+_production_skus_set: set[str] = set()
+for _sn in ("产品配方表_Gelato", "产品出品表_Gelato"):
+    _df = _st_sheets.get(_sn)
+    if _df is not None:
         for _col in ("品名", "配料"):
             if _col in _df.columns:
                 for _v in _df[_col].dropna().unique():
                     _v_str = str(_v).strip()
-                    if _v_str and _v_str not in ("nan", "") and _v_str not in _production_skus_list:
-                        _production_skus_list.append(_v_str)
-    elif "产品出品表" in _sname:
-        _df = wb.sheets[_sname]
-        if "配料" in _df.columns:
-            for _v in _df["配料"].dropna().unique():
-                _v_str = str(_v).strip()
-                if _v_str and _v_str not in ("nan", "") and _v_str not in _production_skus_list:
-                    _production_skus_list.append(_v_str)
-_production_skus = sorted(_production_skus_list)
+                    if _v_str and _v_str not in ("nan", ""):
+                        _production_skus_set.add(_v_str)
+_production_skus = sorted(_production_skus_set)
 
 
 def _parse_date(s) -> Optional[date]:
@@ -837,7 +689,7 @@ with tab4:
                 st.warning(f"⚠️ {len(no_spec_rows)} 行销售计划缺少规格信息（SKU 中无「|规格」且「规格」列为空），"
                            f"可能匹配多个出品规格导致数量偏高。建议补充规格后重新生成。")
             with st.spinner("根据配方展开生产计划…"):
-                prod_rows = sales_to_production(sales_rows, wb.sheets, lead_days=lead_days)
+                prod_rows = sales_to_production(sales_rows, _st_sheets, lead_days=lead_days)
             if prod_rows:
                 plans[PROD_KEY] = prod_rows
                 st.session_state["prod_gen_version"] += 1
@@ -954,7 +806,7 @@ with tab4:
                 with st.spinner("BOM 展开中…"):
                     t0 = datetime.now()
                     result = bom_expand_multi(
-                        wb.sheets, sku_qty,
+                        _st_sheets, sku_qty,
                         order_date=target_date, basis=bom_basis,
                         default_lead_days=bom_lead_days,
                         default_loss_rate=bom_loss_rate,
@@ -1072,4 +924,607 @@ with tab4:
         st.info("BOM 展开结果为空（可能选中的 SKU 在出品表中无配料数据）。")
     else:
         st.info("👆 完成 Step 2 后，在上方设置参数并点击「展开 BOM」，查看原料需求与成本。")
+
+# ── Tab5: 原料管理 ──────────────────────────────────────────
+
+with tab5:
+    _heading_with_help("原料管理",
+        "📌 **功能说明**：管理所有采购原料的信息。支持 CRUD 操作，并可从 Excel 同步。\n"
+        "**字段说明**：编码=品项编码（自动生成）；名称=品项名称；类别=调味酱/包材/乳制品等；"
+        "单价=加价后有效采购价。")
+
+    from mike_product_calc.calc.material_mgmt import get_categories, get_material_stats, search_materials
+    from mike_product_calc.sync.excel_sync import preview_sync_raw_materials, execute_sync_raw_materials
+
+    # ── Init Supabase client ──
+    if "supabase" not in st.session_state:
+        try:
+            supabase_url = st.secrets["supabase"]["url"]
+            supabase_key = st.secrets["supabase"]["service_key"]
+            from mike_product_calc.data.supabase_client import MpcSupabaseClient
+            st.session_state.supabase = MpcSupabaseClient(supabase_url, supabase_key)
+        except Exception as e:
+            st.error(f"Supabase 连接失败: {e}")
+            st.stop()
+
+    client = st.session_state.supabase
+
+    # ── Stats row ──
+    stats = get_material_stats(client)
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    col_s1.metric("原料总数", stats["total"])
+    col_s2.metric("已上线", stats["active"])
+    col_s3.metric("已下线", stats["inactive"])
+    col_s4.metric("类别数", len(stats["by_category"]))
+
+    # ── 独立上传接口 ──
+    with st.expander("📤 上传原料表（Excel）", expanded=False):
+        st.caption("上传包含总原料成本表的 Excel 文件。上传后预览差异再确认同步。")
+        uploaded_raw = st.file_uploader("选择 Excel 文件", type=["xlsx"], key="raw_xlsx_upload")
+        if uploaded_raw is not None:
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+                tmp.write(uploaded_raw.getvalue())
+                tmp_path = tmp.name
+            from mike_product_calc.data.loader import load_workbook
+            raw_wb = load_workbook(Path(tmp_path))
+            diffs = preview_sync_raw_materials(raw_wb.sheets, client)
+            df_diff = pd.DataFrame(diffs)
+            st.dataframe(df_diff, use_container_width=True, hide_index=True)
+            if st.button("确认执行同步", key="sync_upload"):
+                result = execute_sync_raw_materials(raw_wb.sheets, client)
+                st.success(f"同步完成: 新增 {result.inserts}, 更新 {result.updates}")
+                st.rerun()
+
+    # ── Filters (from cache) ──
+    _rm_cache = st.session_state.cached_raw_materials
+    _categories = ["全部"] + sorted({m["category"] for m in _rm_cache if m.get("category")})
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        filter_cat = st.selectbox("类别过滤", options=_categories, key="tab5_cat")
+    with col_f2:
+        filter_status = st.selectbox("状态", options=["全部", "上线", "下线"], key="tab5_status")
+
+    search_term = st.text_input("搜索", placeholder="输入原料名称...", key="tab5_search")
+
+    # ── Material list (filter from cache) ──
+    all_materials = _rm_cache
+    if filter_cat != "全部":
+        all_materials = [m for m in all_materials if m.get("category") == filter_cat]
+    if search_term:
+        all_materials = [m for m in all_materials if search_term.lower() in (m.get("name") or "").lower()]
+    if filter_status != "全部":
+        all_materials = [m for m in all_materials if m.get("status") == filter_status]
+
+    df_materials = pd.DataFrame(all_materials)
+    if not df_materials.empty:
+        display_cols = ["code", "name", "category", "base_price", "final_price", "unit_amount", "unit", "status"]
+        available = [c for c in display_cols if c in df_materials.columns]
+        df_display = df_materials[available].copy()
+        df_display.columns = ["编码", "名称", "类别", "成本", "单价", "单位量", "单位", "状态"]
+        st.dataframe(df_display, use_container_width=True, height=360, hide_index=True)
+    else:
+        st.info("暂无原料数据。请先上传 Excel 导入。")
+
+    st.divider()
+
+    # ── Helper: next code ──
+    def _next_material_code() -> str:
+        max_num = 0
+        for m in st.session_state.cached_raw_materials:
+            c = (m.get("code") or "").strip()
+            if c.startswith("RM") and c[2:].isdigit():
+                max_num = max(max_num, int(c[2:]))
+        return f"RM{max_num + 1:04d}"
+
+    # ── Tab: 新增 vs 修改 ──
+    tab5_action = st.radio("操作", options=["➕ 新增原料", "✏️ 修改原料"], horizontal=True, label_visibility="collapsed")
+
+    if tab5_action == "➕ 新增原料":
+        with st.form("new_material_form", clear_on_submit=True):
+            auto_code = _next_material_code()
+            st.text_input("编码（自动生成）", value=auto_code, disabled=True, key="new_code_display")
+            st.markdown("**必填字段**")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                new_name = st.text_input("名称 *", placeholder="必填")
+                new_category = st.selectbox("类别 *", options=_categories[1:] + ["新增类别..."])
+                if new_category == "新增类别...":
+                    new_category = st.text_input("输入新类别")
+                new_unit = st.text_input("单位 *", placeholder="必填，如 克/个/盒")
+                new_unit_amount = st.number_input("单位量 *", min_value=0.0, format="%.4f", value=0.0)
+            with col_b:
+                new_base_price = st.number_input("加价前单价 *", min_value=0.0, format="%.4f")
+                new_final_price = st.number_input("加价后单价 *", min_value=0.0001, format="%.4f")
+                new_item_type = st.selectbox("品项类型 *", options=["普通", "特殊"])
+                new_status = st.selectbox("状态 *", options=["上线", "下线"])
+            new_notes = st.text_area("备注（可选）")
+
+            submitted = st.form_submit_button("保存", type="primary")
+            if submitted:
+                errors = []
+                if not new_name: errors.append("名称")
+                if not new_category or new_category == "新增类别...": errors.append("类别")
+                if not new_unit: errors.append("单位")
+                if new_final_price <= 0: errors.append("加价后单价")
+                if new_unit_amount <= 0: errors.append("单位量")
+                if errors:
+                    st.error(f"请填写以下必填字段: {', '.join(errors)}")
+                else:
+                    client.create_raw_material({
+                        "code": auto_code,
+                        "name": new_name,
+                        "category": new_category if new_category != "新增类别..." else "",
+                        "unit": new_unit,
+                        "unit_amount": new_unit_amount,
+                        "base_price": new_base_price,
+                        "final_price": new_final_price,
+                        "item_type": new_item_type,
+                        "status": new_status,
+                        "notes": new_notes,
+                    })
+                    st.success(f"已新增: {new_name} ({auto_code})")
+                    st.rerun()
+
+    else:
+        # ── Edit existing material ──
+        all_names = {m["name"]: m for m in st.session_state.cached_raw_materials}
+        if not all_names:
+            st.info("暂无原料可修改。")
+        else:
+            selected_edit_name = st.selectbox("选择要修改的原料", options=list(all_names.keys()), key="tab5_edit_select")
+            edit_material = all_names[selected_edit_name]
+
+            with st.form("edit_material_form"):
+                st.text_input("编码", value=edit_material.get("code", ""), disabled=True)
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    edit_name = st.text_input("名称 *", value=edit_material.get("name", ""))
+                    edit_category = st.selectbox("类别 *",
+                        options=_categories[1:] + ["新增类别..."],
+                        index=_categories[1:].index(edit_material["category"]) + 1 if edit_material.get("category") in _categories[1:] else 0)
+                    if edit_category == "新增类别...":
+                        edit_category = st.text_input("输入新类别")
+                    edit_unit = st.text_input("单位 *", value=edit_material.get("unit", ""))
+                    edit_unit_amount = st.number_input("单位量 *", min_value=0.0, format="%.4f",
+                        value=float(edit_material.get("unit_amount") or 0))
+                with col_b:
+                    edit_base_price = st.number_input("加价前单价 *", min_value=0.0, format="%.4f",
+                        value=float(edit_material.get("base_price") or 0))
+                    edit_final_price = st.number_input("加价后单价 *", min_value=0.0001, format="%.4f",
+                        value=float(edit_material.get("final_price") or 0))
+                    edit_item_type = st.selectbox("品项类型 *", options=["普通", "特殊"],
+                        index=0 if edit_material.get("item_type") != "特殊" else 1)
+                    edit_status = st.selectbox("状态 *", options=["上线", "下线"],
+                        index=0 if edit_material.get("status") != "下线" else 1)
+                edit_notes = st.text_area("备注（可选）", value=edit_material.get("notes") or "")
+
+                submitted = st.form_submit_button("保存修改", type="primary")
+                if submitted:
+                    errors = []
+                    if not edit_name: errors.append("名称")
+                    if not edit_category or edit_category == "新增类别...": errors.append("类别")
+                    if not edit_unit: errors.append("单位")
+                    if edit_final_price <= 0: errors.append("加价后单价")
+                    if edit_unit_amount <= 0: errors.append("单位量")
+                    if errors:
+                        st.error(f"请填写以下必填字段: {', '.join(errors)}")
+                    else:
+                        client.update_raw_material(edit_material["id"], {
+                            "name": edit_name,
+                            "category": edit_category if edit_category != "新增类别..." else "",
+                            "unit": edit_unit,
+                            "unit_amount": edit_unit_amount,
+                            "base_price": edit_base_price,
+                            "final_price": edit_final_price,
+                            "item_type": edit_item_type,
+                            "status": edit_status,
+                            "notes": edit_notes,
+                        })
+                        st.success(f"已更新: {edit_name}")
+                        st.rerun()
+
+            st.markdown("---")
+            col_del1, col_del2 = st.columns([1, 3])
+            with col_del1:
+                if st.button("🗑️ 删除此原料", type="secondary"):
+                    st.session_state["confirm_delete_material"] = edit_material["id"]
+                    st.rerun()
+            with col_del2:
+                if st.session_state.get("confirm_delete_material") == edit_material["id"]:
+                    st.warning(f"确认删除「{edit_material['name']}」？此操作不可撤销。")
+                    if st.button("确认删除", type="primary"):
+                        client.delete_raw_material(edit_material["id"])
+                        st.session_state.pop("confirm_delete_material", None)
+                        st.success(f"已删除: {edit_material['name']}")
+                        st.rerun()
+                    if st.button("取消"):
+                        st.session_state.pop("confirm_delete_material", None)
+                        st.rerun()
+
+# ── Tab6: 配方管理 BOM ──────────────────────────────────────
+
+with tab6:
+    _heading_with_help("配方管理 (BOM)",
+        "📌 **功能说明**：管理产品的配方明细。支持引用采购原料和半成品作为配料。\n"
+        "**使用方式**：选择产品 → 编辑配方明细 → 保存。")
+
+    from mike_product_calc.calc.recipe_mgmt import get_product_with_recipes, build_ingredient_pool
+
+    import re as _re
+
+    def _split_version(name: str) -> tuple[str, str]:
+        """Split '木姜子甜橙 2.0' → ('木姜子甜橙', '2.0')"""
+        m = _re.match(r'^(.+?)\s*(\d+\.\d+)$', name.strip())
+        if m:
+            return m.group(1).strip(), m.group(2)
+        return name.strip(), ""
+
+    client = st.session_state.supabase
+
+    def _extract_id(val):
+        """Extract UUID from expanded object or plain string."""
+        if isinstance(val, dict):
+            return val.get("id")
+        return val
+
+    # ── Left column: product list ──
+    col_left, col_right = st.columns([1, 2])
+
+    with col_left:
+        st.subheader("产品列表")
+        _prods_cache_t6 = st.session_state.cached_products
+        if not _prods_cache_t6:
+            st.info("暂无产品。")
+            st.stop()
+
+        product_options = {p["name"]: p["id"] for p in _prods_cache_t6}
+        selected_name = st.selectbox("选择产品", options=list(product_options.keys()), key="tab6_prod")
+        selected_id = product_options[selected_name]
+
+        # Quick actions
+        st.markdown("---")
+        with st.expander("➕ 新建产品", expanded=False):
+            with st.form("new_product_form"):
+                new_p_name = st.text_input("品名 *", placeholder="如 木姜子甜橙 2.0，版本号自动拆分")
+                new_p_category = st.text_input("品类")
+                new_p_type = st.selectbox("制作类型", options=["门店调配", "工厂调配"])
+                new_p_final = st.checkbox("最终成品", value=True)
+                if st.form_submit_button("保存"):
+                    if new_p_name:
+                        _name, _version = _split_version(new_p_name)
+                        client.create_product({
+                            "name": _name,
+                            "version": _version,
+                            "category": new_p_category,
+                            "production_type": new_p_type,
+                            "is_final_product": new_p_final,
+                        })
+                        st.success(f"已创建: {new_p_name}")
+                        st.rerun()
+                    else:
+                        st.error("品名不能为空")
+
+        # All data is from Supabase
+        st.caption("数据来源: Supabase")
+
+    with col_right:
+        # ── Product detail ──
+        _prod_by_id = {p["id"]: p for p in _prods_cache_t6}
+        prod_data = _prod_by_id.get(selected_id)
+        if not prod_data:
+            st.warning("产品不存在")
+            st.stop()
+
+        st.subheader(f"📋 {prod_data['name']}")
+
+        # Product info form
+        with st.form("edit_product_form"):
+            edit_cols = st.columns(3)
+            with edit_cols[0]:
+                edit_name = st.text_input("品名", value=prod_data.get("name", ""))
+            with edit_cols[1]:
+                edit_version = st.text_input("版本", value=prod_data.get("version", ""))
+            with edit_cols[2]:
+                edit_category = st.text_input("品类", value=prod_data.get("category", ""))
+            with edit_cols[0]:
+                edit_type = st.selectbox("制作类型",
+                    options=["门店调配", "工厂调配"],
+                    index=0 if prod_data.get("production_type") == "门店调配" else 1)
+            with edit_cols[1]:
+                edit_status = st.selectbox("状态",
+                    options=["上线", "下线"],
+                    index=0 if prod_data.get("status") == "上线" else 1)
+            with edit_cols[2]:
+                edit_is_final = st.checkbox("最终成品", value=prod_data.get("is_final_product", False))
+
+            if st.form_submit_button("保存产品信息"):
+                client.update_product(selected_id, {
+                    "name": edit_name,
+                    "version": edit_version,
+                    "category": edit_category,
+                    "production_type": edit_type,
+                    "status": edit_status,
+                    "is_final_product": edit_is_final,
+                })
+                st.success("产品信息已更新")
+                st.rerun()
+
+        st.divider()
+
+        # ── Recipe BOM editor ──
+        st.subheader("配方明细 (BOM)")
+
+        # Load ingredient pool (from cache)
+        pool = {"raw_materials": st.session_state.cached_raw_materials, "products": st.session_state.cached_products}
+
+        # Show existing recipes
+        _all_recipes_t6 = st.session_state.cached_all_recipes
+        recipes = [r for r in _all_recipes_t6 if r.get("product_id") == selected_id]
+        if recipes:
+            recipe_rows = []
+            for r in recipes:
+                ing_name = ""
+                if r["ingredient_source"] == "raw":
+                    raw = r.get("raw_material_id")
+                    if isinstance(raw, dict):
+                        ing_name = raw.get("name", "")
+                    else:
+                        ing_name = str(raw or "")
+                elif r["ingredient_source"] == "product":
+                    ref = r.get("ref_product_id")
+                    if isinstance(ref, dict):
+                        ing_name = ref.get("name", "")
+                    else:
+                        ing_name = str(ref or "")
+
+                recipe_rows.append({
+                    "来源": "原料" if r["ingredient_source"] == "raw" else "半成品",
+                    "配料": ing_name,
+                    "用量": r.get("quantity", 0),
+                })
+
+            df_recipes = pd.DataFrame(recipe_rows)
+
+            # ── Export ──
+            col_exp1, col_exp2 = st.columns([1, 4])
+            with col_exp1:
+                csv_data = df_recipes.to_csv(index=False).encode("utf-8")
+                st.download_button("📥 导出 CSV", data=csv_data, file_name=f"配方_{prod_data['name']}.csv", mime="text/csv")
+            with col_exp2:
+                if st.button("🗑️ 清空全部配方", key="clear_recipes"):
+                    client.set_recipes(selected_id, [])
+                    st.rerun()
+
+            st.dataframe(df_recipes, use_container_width=True, hide_index=True)
+
+            # ── Delete single ingredient ──
+            with st.expander("🗑️ 删除单条配料", expanded=False):
+                ing_options = {f"{r['配料']} (用量: {r['用量']})": i for i, r in enumerate(recipe_rows)}
+                del_choice = st.selectbox("选择要删除的配料", options=list(ing_options.keys()), key="del_ing")
+                if st.button("确认删除", type="secondary"):
+                    del_idx = ing_options[del_choice]
+                    remaining = [r for i, r in enumerate(recipes) if i != del_idx]
+                    normalized = []
+                    for i, r in enumerate(remaining):
+                        normalized.append({
+                            "product_id": r["product_id"],
+                            "ingredient_source": r["ingredient_source"],
+                            "raw_material_id": _extract_id(r.get("raw_material_id")),
+                            "ref_product_id": _extract_id(r.get("ref_product_id")),
+                            "quantity": r["quantity"],
+                            "unit_cost": None,
+                            "store_unit_cost": None,
+                            "sort_order": i,
+                        })
+                    client.set_recipes(selected_id, normalized)
+                    st.success("配料已删除")
+                    st.rerun()
+        else:
+            st.info("暂无配方明细数据。")
+
+        st.markdown("---")
+
+        # ── Add ingredient form ──
+        with st.expander("➕ 添加配料", expanded=True):
+            with st.form("add_ingredient_form"):
+                src_type = st.radio("配料来源", options=["原料", "半成品"], horizontal=True)
+
+                if src_type == "原料":
+                    raw_options = {f"{m['name']} ({m.get('category','')})": m["id"] for m in pool["raw_materials"]}
+                    selected_raw = st.selectbox("选择原料", options=list(raw_options.keys()), key="add_raw")
+                    selected_raw_id = raw_options[selected_raw]
+                else:
+                    prod_options = {f"{p['name']} v{p.get('version','')}": p["id"] for p in pool["products"] if p["id"] != selected_id}
+                    selected_prod = st.selectbox("选择半成品", options=list(prod_options.keys()), key="add_prod")
+                    selected_prod_id = prod_options[selected_prod]
+
+                qty = st.number_input("用量", min_value=0.0, format="%.2f")
+
+                if st.form_submit_button("添加"):
+                    new_recipe = {
+                        "product_id": selected_id,
+                        "ingredient_source": "raw" if src_type == "原料" else "product",
+                        "quantity": qty,
+                        "unit_cost": None,
+                        "store_unit_cost": None,
+                        "sort_order": len(recipes),
+                    }
+                    if src_type == "原料":
+                        new_recipe["raw_material_id"] = selected_raw_id
+                    else:
+                        new_recipe["ref_product_id"] = selected_prod_id
+
+                    existing_recipes = [{
+                        "product_id": r["product_id"],
+                        "ingredient_source": r["ingredient_source"],
+                        "raw_material_id": _extract_id(r.get("raw_material_id")),
+                        "ref_product_id": _extract_id(r.get("ref_product_id")),
+                        "quantity": r["quantity"],
+                        "unit_cost": r.get("unit_cost"),
+                        "store_unit_cost": r.get("store_unit_cost"),
+                        "sort_order": r.get("sort_order", 0),
+                    } for r in recipes]
+
+                    existing_recipes.append(new_recipe)
+                    client.set_recipes(selected_id, existing_recipes)
+                    st.success("配料已添加")
+                    st.rerun()
+
+# ── Tab7: 出品规格管理 ──────────────────────────────────────
+
+with tab7:
+    _heading_with_help("出品规格管理",
+        "📌 **功能说明**：管理最终产品的售卖规格。一个产品可以有多个规格（小杯/标准杯等），"
+        "每个规格可配置主原料用量和附加配料。\n"
+        "**使用方式**：选择产品 → 编辑出品规格 → 保存。")
+
+    client = st.session_state.supabase
+    from mike_product_calc.calc.serving_mgmt import get_final_products
+
+    # ── Left column: product list ──
+    col_left7, col_right7 = st.columns([1, 2])
+
+    with col_left7:
+        st.subheader("产品列表")
+        _t7_prods = [p for p in st.session_state.cached_products if p.get("is_final_product")]
+        if not _t7_prods:
+            st.info("暂无最终成品。请先在「配方管理」中创建产品并勾选「最终成品」。")
+            st.stop()
+
+        prod_options = {p["name"]: p["id"] for p in _t7_prods}
+        _t7_prod_by_id = {p["id"]: p for p in _t7_prods}
+        sel_prod_name = st.selectbox("选择产品", options=list(prod_options.keys()), key="tab7_prod")
+        sel_prod_id = prod_options[sel_prod_name]
+
+        st.markdown("---")
+        if st.button("🔄 刷新规格"):
+            st.rerun()
+
+    with col_right7:
+        # ── Product info ──
+        prod_data = _t7_prod_by_id.get(sel_prod_id, st.session_state.cached_products[0] if st.session_state.cached_products else {})
+        st.subheader(f"📋 {prod_data.get('name','')} — 出品规格")
+
+        # Load pools (from cache)
+        _t7_rm = st.session_state.cached_raw_materials
+        all_mat_options = {f"{m['name']} ({m.get('category','')})": m["id"] for m in _t7_rm}
+        pkg_options = {rm["name"]: rm["id"] for rm in _t7_rm if rm.get("category") in ("包材", None)}
+        _t7_all_prods = st.session_state.cached_products
+        main_prod_options = {f"{p['name']} v{p.get('version','')}".rstrip("v "): p["id"] for p in _t7_all_prods}
+
+        # ── Existing specs (from cache) ──
+        specs = [s for s in st.session_state.cached_all_specs if s.get("product_id") == sel_prod_id]
+
+        if specs:
+            for i, s in enumerate(specs):
+                # Extract main material name
+                main_mat_name = ""
+                mm = s.get("main_material_id")
+                if isinstance(mm, dict):
+                    main_mat_name = mm.get("name", "")
+                    ver = mm.get("version", "")
+                    if ver:
+                        main_mat_name += f" v{ver}"
+                elif isinstance(mm, str):
+                    main_mat_name = str(mm)
+
+                # Extract topping names
+                topping_names = []
+                for t in s.get("serving_spec_toppings", []):
+                    mat = t.get("material_id")
+                    if isinstance(mat, dict):
+                        topping_names.append(f"{mat.get('name','')}×{t.get('quantity',1)}")
+                    elif isinstance(mat, str):
+                        topping_names.append(f"{mat}×{t.get('quantity',1)}")
+
+                # Extract packaging name
+                pkg_name = ""
+                pkg = s.get("packaging_id")
+                if isinstance(pkg, dict):
+                    pkg_name = pkg.get("name", "")
+                elif isinstance(pkg, str):
+                    pkg_name = str(pkg)
+
+                with st.container(border=True):
+                    col_s1, col_s2 = st.columns([3, 1])
+                    with col_s1:
+                        st.markdown(f"**{s['spec_name']}**")
+                        if main_mat_name:
+                            st.caption(f"主原料: {main_mat_name} × {s.get('quantity', '')} 克")
+                        if pkg_name:
+                            st.caption(f"包材: {pkg_name}")
+                        if topping_names:
+                            st.caption(f"附加配料: {', '.join(topping_names)}")
+                    with col_s2:
+                        if st.button("🗑️ 删除", key=f"del_spec_{s['id']}"):
+                            remaining = [sp for sp in specs if sp["id"] != s["id"]]
+                            normalized = [{
+                                "product_id": sp["product_id"],
+                                "spec_name": sp["spec_name"],
+                                "quantity": sp.get("quantity"),
+                                "main_material_id": _extract_id(sp.get("main_material_id")),
+                                "packaging_id": _extract_id(sp.get("packaging_id")),
+                                "packaging_qty": sp.get("packaging_qty", 1),
+                            } for sp in remaining]
+                            client.set_serving_specs(sel_prod_id, normalized)
+                            st.rerun()
+
+            if st.button("🗑️ 清空全部规格"):
+                client.set_serving_specs(sel_prod_id, [])
+                st.rerun()
+        else:
+            st.info("暂无出品规格。使用下方表单添加。")
+
+        st.divider()
+
+        # ── Add new spec ──
+        st.subheader("➕ 新增出品规格")
+        with st.form("add_spec_form7"):
+            new_spec_name = st.selectbox("规格名", options=["小杯", "标准杯", "华夫蛋筒", "华夫碗", "自定义..."],
+                key="new_spec_name")
+            if new_spec_name == "自定义...":
+                new_spec_name = st.text_input("输入自定义规格名", key="custom_spec_name")
+
+            col_q1, col_q2 = st.columns(2)
+            with col_q1:
+                new_main_prod = st.selectbox(
+                    "主原料 *", options=list(main_prod_options.keys()),
+                    index=list(main_prod_options.keys()).index(sel_prod_name) if sel_prod_name in main_prod_options else 0,
+                    key="new_main_prod")
+                new_main_qty = st.number_input("主原料用量 (克)", min_value=0.0, format="%.1f", value=120.0)
+            with col_q2:
+                new_pkg_select = st.selectbox("包材", options=["(无)"] + list(pkg_options.keys()), key="new_pkg")
+                new_pkg_qty = st.number_input("包材用量", min_value=1, value=1, key="new_pkg_qty")
+
+            new_toppings = st.multiselect("附加配料", options=list(all_mat_options.keys()), key="new_toppings")
+
+            if st.form_submit_button("保存规格", type="primary"):
+                new_pkg_id = pkg_options.get(new_pkg_select, "") if new_pkg_select != "(无)" else None
+                new_main_id = main_prod_options.get(new_main_prod)
+
+                # Preserve existing specs + add new one
+                existing_payload = []
+                for sp in specs:
+                    existing_payload.append({
+                        "product_id": sp["product_id"],
+                        "spec_name": sp["spec_name"],
+                        "quantity": sp.get("quantity"),
+                        "main_material_id": _extract_id(sp.get("main_material_id")),
+                        "packaging_id": _extract_id(sp.get("packaging_id")),
+                        "packaging_qty": sp.get("packaging_qty", 1),
+                    })
+
+                existing_payload.append({
+                    "product_id": sel_prod_id,
+                    "spec_name": new_spec_name,
+                    "quantity": new_main_qty,
+                    "main_material_id": new_main_id,
+                    "packaging_id": new_pkg_id,
+                    "packaging_qty": new_pkg_qty,
+                })
+
+                client.set_serving_specs(sel_prod_id, existing_payload)
+                st.success(f"已新增规格: {new_spec_name}")
+                st.rerun()
 
