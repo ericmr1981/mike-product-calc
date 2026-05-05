@@ -253,12 +253,13 @@ with tab3:
         lambda x: f"{x*100:.1f}%" if pd.notna(x) else "N/A"
     )
 
-    # SKU selector
+    # SKU selector — key includes product name so it resets on product change
     sku_options = display_t4["product_key"].tolist()
     selected_sku = st.selectbox(
         "选择 SKU 查看配方",
         options=sku_options,
         format_func=lambda pk: pk.split("|")[-1] if "|" in pk else pk,
+        key=f"sku_sel_{selected_product}",
     )
 
     # Show the basic SKU table
@@ -281,11 +282,15 @@ with tab3:
     st.markdown(f"##### 配方明细 — {selected_sku.split('|')[-1] if '|' in selected_sku else selected_sku}")
 
     # Build recipe table for the selected basis
-    recipe_df = build_recipe_table(_sheets, product_key=selected_sku, basis=basis_t4)
+    @st.cache_data(ttl=60, show_spinner=False)
+    def _get_recipe(sku: str, basis: str) -> pd.DataFrame:
+        return build_recipe_table(_st_sheets, product_key=sku, basis=basis)
+
+    recipe_df = _get_recipe(selected_sku, basis_t4)
     # Build factory-basis recipe for brand cost (only needed when current basis is store)
     factory_cost_map: dict[str, float] = {}
     if basis_t4 != "factory":
-        factory_df = build_recipe_table(_sheets, product_key=selected_sku, basis="factory")
+        factory_df = _get_recipe(selected_sku, "factory")
         if not factory_df.empty:
             for _, fr in factory_df.iterrows():
                 if fr.get("level") in (2,):
