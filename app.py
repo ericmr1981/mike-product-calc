@@ -168,7 +168,7 @@ with tab1:
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("原料总数", _stats["total"])
     col2.metric("已上线", _stats["active"])
-    col3.metric("产品数", len(_prods))
+    col3.metric("产品数", len(_prods_c))
     col4.metric("最终成品", _final)
     col5.metric("出品规格", _specs_count)
 
