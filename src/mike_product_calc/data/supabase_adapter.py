@@ -115,6 +115,7 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
             cost = 0.0
             if isinstance(mm, dict):
                 cost = float(mm.get("final_price") or 0) * float(sp.get("quantity", 0))
+            price = float(sp.get("product_price") or 0)
             profit_rows.append({
                 "品类": prod.get("category", ""),
                 "品名": prod["name"],
@@ -122,10 +123,10 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
                 "状态": prod.get("status", "上线"),
                 "成本": _f(cost),
                 "门店成本": _f(cost),
-                "定价": 0.0,
-                "门店定价": 0.0,
-                "毛利率": "",
-                "门店毛利率": "",
+                "定价": price,
+                "门店定价": price,
+                "毛利率": f"{(price - cost) / price * 100:.1f}%" if price > 0 else "",
+                "门店毛利率": f"{(price - cost) / price * 100:.1f}%" if price > 0 else "",
             })
     if profit_rows:
         sheets["产品毛利表_Gelato"] = pd.DataFrame(profit_rows)

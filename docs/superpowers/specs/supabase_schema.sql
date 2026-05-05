@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS serving_specs (
   quantity          NUMERIC(12,4),
   packaging_id      UUID REFERENCES raw_materials(id) ON DELETE SET NULL,
   packaging_qty     NUMERIC(12,2) DEFAULT 1,
+  product_price     NUMERIC(10,2) DEFAULT 0,
   created_at        TIMESTAMPTZ DEFAULT NOW(),
   updated_at        TIMESTAMPTZ DEFAULT NOW()
 );
