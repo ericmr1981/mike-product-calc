@@ -142,6 +142,26 @@ class MpcSupabaseClient:
         resp.raise_for_status()
         return resp.json()
 
+    def list_all_recipes(self) -> list[dict]:
+        """Get ALL recipes in a single request (batch)."""
+        params = {
+            "select": "*,raw_material_id(*),ref_product_id(*)",
+            "order": "product_id",
+        }
+        resp = requests.get(f"{self._base}/recipes", headers=self._headers(), params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    def list_all_serving_specs(self) -> list[dict]:
+        """Get ALL serving specs in a single request (batch)."""
+        params = {
+            "select": "*,serving_spec_toppings(*,material_id(*)),packaging_id(*),main_material_id(*)",
+            "order": "product_id",
+        }
+        resp = requests.get(f"{self._base}/serving_specs", headers=self._headers(), params=params)
+        resp.raise_for_status()
+        return resp.json()
+
     def set_recipes(self, product_id: str, recipes_data: list[dict]) -> list[dict]:
         """Replace all recipes for a product: delete existing, insert new."""
         # Delete existing recipes (and cascade sub-records)

@@ -125,7 +125,14 @@ try:
     from mike_product_calc.data.supabase_client import MpcSupabaseClient
     _st_supa = MpcSupabaseClient(supabase_url, supabase_key)
     from mike_product_calc.data.supabase_adapter import build_sheets
-    _st_sheets = build_sheets(_st_supa)
+
+    @st.cache_data(ttl=300, show_spinner="加载数据中...")
+    def _cached_build_sheets(url: str, key: str) -> dict[str, pd.DataFrame]:
+        """Cached wrapper: rebuilds every 5 min or when Supabase data changes."""
+        _c = MpcSupabaseClient(url, key)
+        return build_sheets(_c)
+
+    _st_sheets = _cached_build_sheets(supabase_url, supabase_key)
 except Exception as _e:
     st.error(f"Supabase 连接失败: {_e}")
     st.stop()
@@ -500,25 +507,18 @@ with tab3:
 _profit_df = sku_profit_table(_st_sheets, basis="factory", only_status=None)
 _all_skus = sorted(_profit_df["product_key"].dropna().unique().tolist())
 
-# Production SKU pool: product names + ingredient names + serving spec toppings
+# Production SKU pool: extract from already-built sheets (no extra API calls)
 _production_skus_set: set[str] = set()
-for _prod in _st_supa.list_products():
-    _full = _full_name(_prod)
-    if _full:
-        _production_skus_set.add(_full)
-    for _r in (_st_supa.list_recipes(_prod["id"]) or []):
-        _ing_name = _get_ingredient_name(_r) if '_get_ingredient_name' in dir() else ''
-        if isinstance(_r.get("raw_material_id"), dict):
-            _production_skus_set.add(_r["raw_material_id"].get("name", ""))
-        elif isinstance(_r.get("ref_product_id"), dict):
-            _production_skus_set.add(_r["ref_product_id"].get("name", ""))
-    if _prod.get("is_final_product"):
-        for _sp in (_st_supa.list_serving_specs(_prod["id"]) or []):
-            for _t in _sp.get("serving_spec_toppings", []):
-                _tm = _t.get("material_id")
-                if isinstance(_tm, dict):
-                    _production_skus_set.add(_tm.get("name", ""))
-_production_skus = sorted(n for n in _production_skus_set if n and n not in ("nan", ""))
+for _sn in ("产品配方表_Gelato", "产品出品表_Gelato"):
+    _df = _st_sheets.get(_sn)
+    if _df is not None:
+        for _col in ("品名", "配料"):
+            if _col in _df.columns:
+                for _v in _df[_col].dropna().unique():
+                    _v_str = str(_v).strip()
+                    if _v_str and _v_str not in ("nan", ""):
+                        _production_skus_set.add(_v_str)
+_production_skus = sorted(_production_skus_set)
 
 
 def _parse_date(s) -> Optional[date]:

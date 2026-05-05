@@ -43,11 +43,25 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
             })
         sheets["总原料成本表"] = pd.DataFrame(rows)
 
+    # ── Batch fetch all recipes & specs (3 requests total instead of 50+) ──
+    all_recipes = _safe_call(client.list_all_recipes) or []
+    _recipes_by_product: dict[str, list[dict]] = {}
+    for r in all_recipes:
+        pid = r.get("product_id")
+        if pid:
+            _recipes_by_product.setdefault(pid, []).append(r)
+
+    all_specs = _safe_call(client.list_all_serving_specs) or []
+    _specs_by_product: dict[str, list[dict]] = {}
+    for sp in all_specs:
+        pid = sp.get("product_id")
+        if pid:
+            _specs_by_product.setdefault(pid, []).append(sp)
+
     # ── 产品配方表_Gelato ──
     recipe_rows = []
     for prod in products:
-        recipes = _safe_call(lambda: client.list_recipes(prod["id"])) or []
-        for r in recipes:
+        for r in _recipes_by_product.get(prod["id"], []):
             ing_name = _get_ingredient_name(r)
             if not ing_name:
                 continue
@@ -65,8 +79,7 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
     for prod in products:
         if not prod.get("is_final_product", False):
             continue
-        specs = _safe_call(lambda: client.list_serving_specs(prod["id"])) or []
-        for sp in specs:
+        for sp in _specs_by_product.get(prod["id"], []):
             mm = sp.get("main_material_id")
             mm_name = _get_prod_name(mm) if isinstance(mm, dict) else str(mm or "")
             if mm_name:
@@ -97,8 +110,7 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
     for prod in products:
         if not prod.get("is_final_product", False):
             continue
-        specs = _safe_call(lambda: client.list_serving_specs(prod["id"])) or []
-        for sp in specs:
+        for sp in _specs_by_product.get(prod["id"], []):
             mm = sp.get("main_material_id")
             cost = 0.0
             if isinstance(mm, dict):
@@ -122,9 +134,8 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
     cost_rows = []
     for prod in products:
         full_name = _full_name(prod)
-        specs = _safe_call(lambda: client.list_serving_specs(prod["id"])) or []
         serving_qty = 0
-        for sp in specs:
+        for sp in _specs_by_product.get(prod["id"], []):
             mm = sp.get("main_material_id")
             if isinstance(mm, dict) and _full_name(mm) == full_name:
                 serving_qty += float(sp.get("quantity", 0))
