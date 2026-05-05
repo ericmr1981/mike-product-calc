@@ -130,37 +130,14 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
     if profit_rows:
         sheets["产品毛利表_Gelato"] = pd.DataFrame(profit_rows)
 
-    # ── 产品成本计算表_Gelato (computed) ──
-    def _calc_product_cost(pid: str, level: int = 0) -> tuple[float, float, float]:
-        """Compute (factory_cost, store_cost, serving_qty) for a product."""
-        _fc, _sc, _sq = 0.0, 0.0, 0.0
-        for r in _recipes_by_product.get(pid, []):
-            qty = float(r.get("quantity", 0))
-            if r["ingredient_source"] == "raw":
-                rm = r.get("raw_material_id")
-                if isinstance(rm, dict):
-                    fp = float(rm.get("final_price") or 1)
-                    ua = float(rm.get("unit_amount") or 1)
-                    _fc += (fp / ua) * qty if ua > 0 else fp * qty
-                    _sc += (fp / ua) * qty if ua > 0 else fp * qty
-            elif r["ingredient_source"] == "product" and level < 3:
-                rp = r.get("ref_product_id")
-                if isinstance(rp, dict):
-                    rfc, rsc, _ = _calc_product_cost(rp["id"], level + 1)
-                    _fc += rfc
-                    _sc += rsc
-        for sp in _specs_by_product.get(pid, []):
-            mm = sp.get("main_material_id")
-            if isinstance(mm, dict) and mm.get("id") == pid:
-                _sq += float(sp.get("quantity", 0))
-        return _fc, _sc, _sq
-
+    # ── 产品成本计算表_Gelato (read from pre-computed Supabase fields) ──
     cost_rows = []
     for prod in products:
         full_name = _full_name(prod)
-        fc, sc, sq = _calc_product_cost(prod["id"])
-        uc = fc / sq if sq > 0 else 0  # unit cost
-        suc = sc / sq if sq > 0 else 0  # store unit cost
+        sq = float(prod.get("computed_batch_size") or 0)
+        fc = float(prod.get("computed_factory_cost") or 0)
+        sc = float(prod.get("computed_store_cost") or 0)
+        uc = float(prod.get("computed_unit_cost") or 0) if sq > 0 else 0
         cost_rows.append({
             "品类": prod.get("category", ""),
             "品名": full_name,
@@ -171,7 +148,7 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
             "成本": _f(fc),
             "单位成本": _f(uc),
             "门店成本": _f(sc),
-            "门店单位成本": _f(suc),
+            "门店单位成本": _f(sc / sq if sq > 0 else 0),
         })
     if cost_rows:
         sheets["产品成本计算表_Gelato"] = pd.DataFrame(cost_rows)
