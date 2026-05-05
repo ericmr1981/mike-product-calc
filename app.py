@@ -290,8 +290,18 @@ with tab3:
         "**使用方法**：选择产品 → 选 SKU 规格 → 在配方表中调整门店价格或在右侧调售价 → 保存方案对比。")
     st.caption("三步递进：选择产品 → SKU 规格毛利 → 配方明细与调价")
 
+    # ── Data source: Supabase if available ──
+    _sheets = wb.sheets
+    if "supabase" in st.session_state:
+        try:
+            from mike_product_calc.data.supabase_adapter import build_sheets
+            _supa_sheets = build_sheets(st.session_state.supabase)
+            _sheets = {**wb.sheets, **{k: v for k, v in _supa_sheets.items() if not v.empty}}
+        except Exception:
+            pass
+
     # ── Step 1: Select product ──────────────────────────────────────
-    all_profit = sku_profit_table(wb.sheets, basis="store", only_status=None)
+    all_profit = sku_profit_table(_sheets, basis="store", only_status=None)
     if all_profit.empty:
         st.warning("无可用毛利数据。")
         st.stop()
@@ -319,7 +329,7 @@ with tab3:
         st.stop()
 
     # ── Step 2: SKU specs table (follows selected basis) ───────────
-    profit_df_t4 = sku_profit_table(wb.sheets, basis=basis_t4, only_status=None)
+    profit_df_t4 = sku_profit_table(_sheets, basis=basis_t4, only_status=None)
     skus_for_product = [
         pk for pk in all_pks
         if pk.startswith(selected_product + "|")
@@ -366,11 +376,11 @@ with tab3:
     st.markdown(f"##### 配方明细 — {selected_sku.split('|')[-1] if '|' in selected_sku else selected_sku}")
 
     # Build recipe table for the selected basis
-    recipe_df = build_recipe_table(wb.sheets, product_key=selected_sku, basis=basis_t4)
+    recipe_df = build_recipe_table(_sheets, product_key=selected_sku, basis=basis_t4)
     # Build factory-basis recipe for brand cost (only needed when current basis is store)
     factory_cost_map: dict[str, float] = {}
     if basis_t4 != "factory":
-        factory_df = build_recipe_table(wb.sheets, product_key=selected_sku, basis="factory")
+        factory_df = build_recipe_table(_sheets, product_key=selected_sku, basis="factory")
         if not factory_df.empty:
             for _, fr in factory_df.iterrows():
                 if fr.get("level") in (2,):
@@ -584,7 +594,7 @@ with tab3:
                 if va != vb and st.button("对比"):
                     s_a, s_b = store.get(va), store.get(vb)
                     if s_a and s_b:
-                        diff = compare_scenarios(s_a, s_b, wb.sheets, basis=basis_t4)
+                        diff = compare_scenarios(s_a, s_b, _sheets, basis=basis_t4)
                         st.dataframe(diff, use_container_width=True, height=420, hide_index=True)
 # ── Tab5: 产销计划 ────────────────────────────────────────────────────
 
