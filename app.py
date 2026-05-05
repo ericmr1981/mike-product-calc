@@ -137,9 +137,13 @@ except Exception as _e:
     st.error(f"Supabase 连接失败: {_e}")
     st.stop()
 
-# Track supabase client in session state for tabs that need it
+# Track supabase client and cached data in session state
 if "supabase" not in st.session_state:
     st.session_state.supabase = _st_supa
+    st.session_state.cached_raw_materials = _st_supa.list_raw_materials()
+    st.session_state.cached_products = _st_supa.list_products()
+    st.session_state.cached_all_recipes = _st_supa.list_all_recipes()
+    st.session_state.cached_all_specs = _st_supa.list_all_serving_specs()
 
 
 def _full_name(p: dict) -> str:
@@ -155,17 +159,18 @@ with tab1:
         "📌 **功能说明**：查看 Supabase 中所有数据的统计概览。\n"
         "**数据源**：Supabase (PostgreSQL)")
     from mike_product_calc.calc.material_mgmt import get_material_stats
-    _stats = get_material_stats(_st_supa)
-    _prods = _st_supa.list_products()
-    _final = sum(1 for p in _prods if p.get("is_final_product"))
-    _specs_counts = sum(len(_st_supa.list_serving_specs(p["id"])) for p in _prods)
+    _rm = st.session_state.cached_raw_materials
+    _prods_c = st.session_state.cached_products
+    _stats = {"total": len(_rm), "active": sum(1 for m in _rm if m.get("status") in ("上线", "已生效")), "inactive": sum(1 for m in _rm if m.get("status") not in ("上线", "已生效")), "by_category": {}}
+    _final = sum(1 for p in _prods_c if p.get("is_final_product"))
+    _specs_count = len(st.session_state.cached_all_specs)
 
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("原料总数", _stats["total"])
     col2.metric("已上线", _stats["active"])
     col3.metric("产品数", len(_prods))
     col4.metric("最终成品", _final)
-    col5.metric("出品规格", _specs_counts)
+    col5.metric("出品规格", _specs_count)
 
 
 with tab2:
@@ -971,21 +976,23 @@ with tab5:
                 st.success(f"同步完成: 新增 {result.inserts}, 更新 {result.updates}")
                 st.rerun()
 
-    # ── Filters ──
-    categories = ["全部"] + get_categories(client)
+    # ── Filters (from cache) ──
+    _rm_cache = st.session_state.cached_raw_materials
+    _categories = ["全部"] + sorted({m["category"] for m in _rm_cache if m.get("category")})
     col_f1, col_f2 = st.columns(2)
     with col_f1:
-        filter_cat = st.selectbox("类别过滤", options=categories, key="tab5_cat")
+        filter_cat = st.selectbox("类别过滤", options=_categories, key="tab5_cat")
     with col_f2:
         filter_status = st.selectbox("状态", options=["全部", "上线", "下线"], key="tab5_status")
 
     search_term = st.text_input("搜索", placeholder="输入原料名称...", key="tab5_search")
 
-    # ── Material list ──
-    all_materials = client.list_raw_materials(
-        category=filter_cat if filter_cat != "全部" else None,
-        search=search_term if search_term else None,
-    )
+    # ── Material list (filter from cache) ──
+    all_materials = _rm_cache
+    if filter_cat != "全部":
+        all_materials = [m for m in all_materials if m.get("category") == filter_cat]
+    if search_term:
+        all_materials = [m for m in all_materials if search_term.lower() in (m.get("name") or "").lower()]
     if filter_status != "全部":
         all_materials = [m for m in all_materials if m.get("status") == filter_status]
 
@@ -1002,10 +1009,9 @@ with tab5:
     st.divider()
 
     # ── Helper: next code ──
-    def _next_material_code(client) -> str:
-        existing = client.list_raw_materials()
+    def _next_material_code() -> str:
         max_num = 0
-        for m in existing:
+        for m in st.session_state.cached_raw_materials:
             c = (m.get("code") or "").strip()
             if c.startswith("RM") and c[2:].isdigit():
                 max_num = max(max_num, int(c[2:]))
@@ -1016,13 +1022,13 @@ with tab5:
 
     if tab5_action == "➕ 新增原料":
         with st.form("new_material_form", clear_on_submit=True):
-            auto_code = _next_material_code(client)
+            auto_code = _next_material_code()
             st.text_input("编码（自动生成）", value=auto_code, disabled=True, key="new_code_display")
             st.markdown("**必填字段**")
             col_a, col_b = st.columns(2)
             with col_a:
                 new_name = st.text_input("名称 *", placeholder="必填")
-                new_category = st.selectbox("类别 *", options=get_categories(client) + ["新增类别..."])
+                new_category = st.selectbox("类别 *", options=_categories[1:] + ["新增类别..."])
                 if new_category == "新增类别...":
                     new_category = st.text_input("输入新类别")
                 new_unit = st.text_input("单位 *", placeholder="必填，如 克/个/盒")
@@ -1062,7 +1068,7 @@ with tab5:
 
     else:
         # ── Edit existing material ──
-        all_names = {m["name"]: m for m in client.list_raw_materials()}
+        all_names = {m["name"]: m for m in st.session_state.cached_raw_materials}
         if not all_names:
             st.info("暂无原料可修改。")
         else:
@@ -1075,8 +1081,8 @@ with tab5:
                 with col_a:
                     edit_name = st.text_input("名称 *", value=edit_material.get("name", ""))
                     edit_category = st.selectbox("类别 *",
-                        options=get_categories(client) + ["新增类别..."],
-                        index=0 if edit_material.get("category") not in get_categories(client) else get_categories(client).index(edit_material["category"]))
+                        options=_categories[1:] + ["新增类别..."],
+                        index=_categories[1:].index(edit_material["category"]) + 1 if edit_material.get("category") in _categories[1:] else 0)
                     if edit_category == "新增类别...":
                         edit_category = st.text_input("输入新类别")
                     edit_unit = st.text_input("单位 *", value=edit_material.get("unit", ""))
@@ -1167,12 +1173,12 @@ with tab6:
 
     with col_left:
         st.subheader("产品列表")
-        products = client.list_products()
-        if not products:
-            st.info("暂无产品，请先从 Excel 同步。")
+        _prods_cache_t6 = st.session_state.cached_products
+        if not _prods_cache_t6:
+            st.info("暂无产品。")
             st.stop()
 
-        product_options = {p["name"]: p["id"] for p in products}
+        product_options = {p["name"]: p["id"] for p in _prods_cache_t6}
         selected_name = st.selectbox("选择产品", options=list(product_options.keys()), key="tab6_prod")
         selected_id = product_options[selected_name]
 
@@ -1204,7 +1210,8 @@ with tab6:
 
     with col_right:
         # ── Product detail ──
-        prod_data = client.get_product(selected_id)
+        _prod_by_id = {p["id"]: p for p in _prods_cache_t6}
+        prod_data = _prod_by_id.get(selected_id)
         if not prod_data:
             st.warning("产品不存在")
             st.stop()
@@ -1248,11 +1255,12 @@ with tab6:
         # ── Recipe BOM editor ──
         st.subheader("配方明细 (BOM)")
 
-        # Load ingredient pool
-        pool = build_ingredient_pool(client)
+        # Load ingredient pool (from cache)
+        pool = {"raw_materials": st.session_state.cached_raw_materials, "products": st.session_state.cached_products}
 
         # Show existing recipes
-        recipes = client.list_recipes(selected_id)
+        _all_recipes_t6 = st.session_state.cached_all_recipes
+        recipes = [r for r in _all_recipes_t6 if r.get("product_id") == selected_id]
         if recipes:
             recipe_rows = []
             for r in recipes:
@@ -1379,12 +1387,13 @@ with tab7:
 
     with col_left7:
         st.subheader("产品列表")
-        final_products = get_final_products(client)
-        if not final_products:
+        _t7_prods = [p for p in st.session_state.cached_products if p.get("is_final_product")]
+        if not _t7_prods:
             st.info("暂无最终成品。请先在「配方管理」中创建产品并勾选「最终成品」。")
             st.stop()
 
-        prod_options = {p["name"]: p["id"] for p in final_products}
+        prod_options = {p["name"]: p["id"] for p in _t7_prods}
+        _t7_prod_by_id = {p["id"]: p for p in _t7_prods}
         sel_prod_name = st.selectbox("选择产品", options=list(prod_options.keys()), key="tab7_prod")
         sel_prod_id = prod_options[sel_prod_name]
 
@@ -1394,18 +1403,18 @@ with tab7:
 
     with col_right7:
         # ── Product info ──
-        prod_data = client.get_product(sel_prod_id)
-        st.subheader(f"📋 {prod_data['name']} — 出品规格")
+        prod_data = _t7_prod_by_id.get(sel_prod_id, st.session_state.cached_products[0] if st.session_state.cached_products else {})
+        st.subheader(f"📋 {prod_data.get('name','')} — 出品规格")
 
-        # Load pools
-        raw_materials = client.list_raw_materials()
-        all_mat_options = {f"{m['name']} ({m.get('category','')})": m["id"] for m in raw_materials}
-        pkg_options = {rm["name"]: rm["id"] for rm in raw_materials if rm.get("category") in ("包材", None)}
-        all_products = client.list_products()
-        main_prod_options = {f"{p['name']} v{p.get('version','')}".rstrip("v "): p["id"] for p in all_products}
+        # Load pools (from cache)
+        _t7_rm = st.session_state.cached_raw_materials
+        all_mat_options = {f"{m['name']} ({m.get('category','')})": m["id"] for m in _t7_rm}
+        pkg_options = {rm["name"]: rm["id"] for rm in _t7_rm if rm.get("category") in ("包材", None)}
+        _t7_all_prods = st.session_state.cached_products
+        main_prod_options = {f"{p['name']} v{p.get('version','')}".rstrip("v "): p["id"] for p in _t7_all_prods}
 
-        # ── Existing specs ──
-        specs = client.list_serving_specs(sel_prod_id)
+        # ── Existing specs (from cache) ──
+        specs = [s for s in st.session_state.cached_all_specs if s.get("product_id") == sel_prod_id]
 
         if specs:
             for i, s in enumerate(specs):
