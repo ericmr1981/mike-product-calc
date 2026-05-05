@@ -1602,7 +1602,3 @@ with tab7:
                 st.success(f"已新增规格: {new_spec_name}")
                 st.rerun()
 
-            client.set_serving_specs(sel_prod_id, existing_payload)
-            st.success(f"已新增规格: {spec_name}")
-            st.rerun()
-
