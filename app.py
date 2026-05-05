@@ -357,13 +357,13 @@ with tab3:
     st.caption("三步递进：选择产品 → SKU 规格毛利 → 配方明细与调价")
 
     # ── Step 1: Select product ──────────────────────────────────────
-    profit_df_t4 = sku_profit_table(wb.sheets, basis="store", only_status=None)
-    if profit_df_t4.empty:
+    all_profit = sku_profit_table(wb.sheets, basis="store", only_status=None)
+    if all_profit.empty:
         st.warning("无可用毛利数据。")
         st.stop()
 
     # Extract product-level keys (品类|品名)
-    all_pks = profit_df_t4["product_key"].dropna().unique().tolist()
+    all_pks = all_profit["product_key"].dropna().unique().tolist()
     product_options = sorted(set("|".join(pk.split("|")[:2]) for pk in all_pks if "|" in pk))
 
     col_prod, col_basis_t4 = st.columns([3, 1])
@@ -384,7 +384,8 @@ with tab3:
         st.info("请在上方选择一个产品。")
         st.stop()
 
-    # ── Step 2: SKU specs table ────────────────────────────────────
+    # ── Step 2: SKU specs table (follows selected basis) ───────────
+    profit_df_t4 = sku_profit_table(wb.sheets, basis=basis_t4, only_status=None)
     skus_for_product = [
         pk for pk in all_pks
         if pk.startswith(selected_product + "|")
@@ -430,8 +431,19 @@ with tab3:
     st.divider()
     st.markdown(f"##### 配方明细 — {selected_sku.split('|')[-1] if '|' in selected_sku else selected_sku}")
 
-    # Build recipe table
+    # Build recipe table for the selected basis
     recipe_df = build_recipe_table(wb.sheets, product_key=selected_sku, basis=basis_t4)
+    # Build factory-basis recipe for brand cost (only needed when current basis is store)
+    factory_cost_map: dict[str, float] = {}
+    if basis_t4 != "factory":
+        factory_df = build_recipe_table(wb.sheets, product_key=selected_sku, basis="factory")
+        if not factory_df.empty:
+            for _, fr in factory_df.iterrows():
+                if fr.get("level") in (2,):
+                    continue
+                item = str(fr.get("item", "")).strip()
+                if item:
+                    factory_cost_map[item] = float(fr.get("cost", 0) or 0)
 
     if recipe_df.empty:
         st.info("暂无配方明细数据。")
@@ -484,12 +496,12 @@ with tab3:
             except (TypeError, ValueError):
                 continue
 
-            # Cost is proportional to store_price for all ingredient types
-            # (direct: cost = qty * store_price/spec; sub-ingredient: cost = batch_qty * store_price/spec * scale)
-            # So new_cost = orig_cost * (new_store_price / orig_store_price)
-            if orig_sp_f > 0 and abs(orig_sp_f - new_sp_f) > 0.0001:
+            # Cost adjustment depends on basis:
+            # - store: cost = store_price × usage_qty / spec → proportional to store_price
+            # - factory: cost = brand_cost × usage_qty / spec → independent of store_price
+            if basis_t4 == "store" and orig_sp_f > 0 and abs(orig_sp_f - new_sp_f) > 0.0001:
                 row["cost"] = round(float(orig_cost) * (new_sp_f / orig_sp_f), 2)
-            # else keep original cost
+            # else keep original cost (factory basis doesn't adjust with store_price)
 
             # Recalculate profit_rate
             try:
@@ -504,43 +516,36 @@ with tab3:
             except (TypeError, ValueError):
                 pass
 
-        # Compute brand cost using store_price × usage_qty / spec (always store-level)
-        brand_cost_total = 0.0
-        for row in recalc_data:
-            if row.get("level") == 2:
-                continue
-            usage_qty = float(row.get("usage_qty", 0) or 0)
-            store_price = float(row.get("store_price", 0) or 0)
-            spec_str = str(row.get("spec", "") or "")
-            if spec_str and spec_str not in ("—", "-", "nan"):
-                spec_val = _parse_spec(spec_str)
-            else:
-                spec_val = None
-            if spec_val and spec_val > 0 and usage_qty > 0 and store_price > 0:
-                row_brand_cost = usage_qty * store_price / spec_val
-            else:
-                row_brand_cost = float(row.get("cost", 0) or 0)
-            brand_cost_total += row_brand_cost
+            # Brand cost: factory-basis costs (only meaningful in store basis)
+            if basis_t4 == "store":
+                item_name = str(row.get("item", "")).strip()
+                brand_cost_total += factory_cost_map.get(item_name, 0) or 0
 
-        brand_profit = total_cost - brand_cost_total
+        brand_profit = total_cost - brand_cost_total if basis_t4 == "store" else 0.0
 
         # ── Pricing & margin KPI cards ──────────────────────────────
         default_price = float(sku_df[sku_df["product_key"] == selected_sku]["price"].iloc[0]) if not sku_df[sku_df["product_key"] == selected_sku].empty else 0.0
         price_key = f"t4_sku_price_{selected_sku}"
         current_price = st.session_state.get(price_key, default_price)
 
-        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
-        with col_p1:
+        show_brand = basis_t4 == "store"
+        cols = st.columns(4 if show_brand else 3)
+        with cols[0]:
             new_price = st.number_input("门店售价（元）", value=float(current_price), step=1.0, min_value=0.0, key=f"t4_price_{selected_sku}")
             st.session_state[price_key] = new_price
-        with col_p2:
+        with cols[1]:
             gross_profit = new_price - total_cost
             st.metric("总成本（元）", f"{total_cost:.2f}")
-        with col_p3:
-            st.metric("品牌成本（元）", f"{brand_cost_total:.2f}", delta=f"品牌利润 {brand_profit:.2f}")
-        with col_p4:
-            margin_rate = (gross_profit / new_price * 100) if new_price > 0 else 0
-            st.metric("毛利", f"{gross_profit:.2f} 元", delta=f"{margin_rate:.1f}%")
+        if show_brand:
+            with cols[2]:
+                st.metric("品牌成本（元）", f"{brand_cost_total:.2f}", delta=f"品牌利润 {brand_profit:.2f}")
+            with cols[3]:
+                margin_rate = (gross_profit / new_price * 100) if new_price > 0 else 0
+                st.metric("毛利", f"{gross_profit:.2f} 元", delta=f"{margin_rate:.1f}%")
+        else:
+            with cols[2]:
+                margin_rate = (gross_profit / new_price * 100) if new_price > 0 else 0
+                st.metric("毛利", f"{gross_profit:.2f} 元", delta=f"{margin_rate:.1f}%")
 
         # ── Cost breakdown charts ────────────────────────────────────
         st.divider()

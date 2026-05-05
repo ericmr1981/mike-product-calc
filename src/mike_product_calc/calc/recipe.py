@@ -123,8 +123,8 @@ def get_semi_product_recipes(sheets: Dict[str, pd.DataFrame]) -> Dict[str, List[
         semi_col = _find_col(df, "品名")
         ing_col = _find_col(df, "配料")
         qty_col = _find_col(df, "用量")
-        factory_total_col = _find_col(df, "总成本")
-        store_total_col = _find_col(df, "门店总成本")
+        factory_total_col = next((c for c in df.columns if c.strip() == "总成本"), None)
+        store_total_col = next((c for c in df.columns if c.strip() == "门店总成本"), None)
 
         if not semi_col or not ing_col or not qty_col:
             continue
@@ -206,124 +206,202 @@ def build_recipe_table(
     """Build hierarchical recipe table for a SKU.
 
     Columns: item | usage_qty | cost | spec | store_price | brand_cost | profit_rate
+
+    Calculation rules by type and basis:
+    - 1级直接原料: store_price=总原料成本表.加价后单价, brand_cost=总原料成本表.加价前单价
+      - 成本(store)=store_price×用量/规格, 成本(factory)=brand_cost×用量/规格
+    - 1级半成品: store_price=产品成本计算表.门店成本, brand_cost=产品成本计算表.成本
+      - 成本(store)=门店价格/规格×用量, 成本(factory)=品牌成本/规格×用量
+    - 2级配料: store_price=总原料成本表.加价后单价, brand_cost=总原料成本表.加价前单价
+      - 成本(store)=产品配方表.门店单位成本×用量
+      - 成本(factory)=产品配方表.单位成本×用量
     """
     from mike_product_calc.calc.profit import sku_cost_breakdown
 
-    # Get cost breakdown to find main materials
+    # ── Extract category from product_key (e.g. "Gelato" from "Gelato|xxx|xxx") ──
+    category = product_key.split("|")[0] if "|" in product_key else ""
+
+    # ── Read semi-product data from 产品成本计算表 ──
+    semi_store_price: dict[str, float] = {}
+    semi_brand_cost: dict[str, float] = {}
+    semi_spec: dict[str, str] = {}
+    for sname in sheets:
+        if "产品成本计算表" not in sname:
+            continue
+        if category and category.lower() not in sname.lower():
+            continue
+        df = sheets[sname]
+        name_col = _find_col(df, "品名")
+        # Use exact match for cost columns to avoid matching "100克成本"
+        store_cost_col = next((c for c in df.columns if c.strip() == "门店成本"), None)
+        factory_cost_col = next((c for c in df.columns if c.strip() == "成本"), None)
+        spec_col = _find_col(df, "规格")
+        if not name_col:
+            continue
+        for _, row in df.iterrows():
+            nm = str(row.get(name_col, "")).strip()
+            if not nm or nm == "nan":
+                continue
+            if store_cost_col:
+                try:
+                    semi_store_price[nm] = float(row[store_cost_col])
+                except (TypeError, ValueError):
+                    pass
+            if factory_cost_col:
+                try:
+                    semi_brand_cost[nm] = float(row[factory_cost_col])
+                except (TypeError, ValueError):
+                    pass
+            if spec_col:
+                sp = str(row.get(spec_col, ""))
+                if sp and sp != "nan":
+                    semi_spec[nm] = sp
+
+    # ── Read sub-ingredient total costs from 产品配方表 ──
+    sub_factory_cost: dict[str, float] = {}  # factory total cost (总成本)
+    sub_store_cost: dict[str, float] = {}    # store total cost (门店总成本)
+    for sname in sheets:
+        if "产品配方表" not in sname:
+            continue
+        df = sheets[sname]
+        ing_col = _find_col(df, "配料")
+        fc_col = _find_col(df, "总成本")
+        sc_col = _find_col(df, "门店总成本")
+        if not ing_col:
+            continue
+        for _, row in df.iterrows():
+            ing = str(row.get(ing_col, "")).strip()
+            if not ing or ing == "nan":
+                continue
+            if fc_col:
+                try:
+                    sub_factory_cost[ing] = float(row[fc_col])
+                except (TypeError, ValueError):
+                    pass
+            if sc_col:
+                try:
+                    sub_store_cost[ing] = float(row[sc_col])
+                except (TypeError, ValueError):
+                    pass
+
+    # ── Get cost breakdown (items + costs) ──
     breakdown = sku_cost_breakdown(sheets, product_key=product_key, basis=basis)
     if breakdown.empty:
         return pd.DataFrame()
 
+    # ── Maps from 总原料成本表 ──
     brand_cost_map = get_brand_cost_map(sheets)
     store_price_map = get_store_price_map(sheets)
     spec_map = get_brand_spec_map(sheets)
+
+    # ── Semi-product recipes from 产品配方表 ──
     semi_recipes = get_semi_product_recipes(sheets)
 
+    # ── Usage map from 产品出品表 ──
     usage_map = _lookup_usage_map(sheets, product_key)
 
     rows: List[RecipeRow] = []
     for _, b_row in breakdown.iterrows():
         item = b_row["item"]
-        cost_val = _to_float(b_row["cost"]) or 0.0
-
-        # Look up usage qty from 产品出品表 via the pre-built map
         usage_qty, usage_unit = usage_map.get(item, (0.0, ""))
-
-        brand_cost = brand_cost_map.get(item, 0.0)
-        spec = spec_map.get(item, "")
-
-        # Check if this item is a semi-product with sub-recipes
         is_semi = item in semi_recipes
 
-        if not is_semi:
-            # Direct ingredient
-            store_price = store_price_map.get(item, brand_cost or cost_val)
+        if is_semi:
+            # ── 1级半成品: data from 产品成本计算表 ──
+            sp = semi_store_price.get(item, 0.0)
+            bc = semi_brand_cost.get(item, 0.0)
+            spec = semi_spec.get(item, "")
+
             spec_parsed = _parse_spec(spec)
             if spec_parsed and spec_parsed > 0 and usage_qty > 0:
-                calculated_cost = usage_qty * (store_price / spec_parsed)
-            else:
-                calculated_cost = cost_val
-
-            profit_rate = round(_calc_profit_rate(store_price, brand_cost) * 100, 1)
-
-            rows.append(RecipeRow(
-                item=item,
-                usage_qty=usage_qty,
-                usage_unit=usage_unit,
-                cost=round(calculated_cost, 4),
-                spec=spec,
-                store_price=store_price,
-                brand_cost=round(brand_cost, 4),
-                profit_rate=profit_rate,
-                level=LEVEL_DIRECT,
-                is_semi=False,
-            ))
-        else:
-            # Semi-product: show the semi row + sub-ingredients
-            sub_items = semi_recipes[item]
-
-            # Choose cost column based on basis
-            cost_key = "store_total_cost" if basis == "store" else "total_cost"
-
-            # Calculate original batch cost from recipe data (using the chosen basis)
-            _tc_list: list[float] = []
-            for s in sub_items:
-                v = s.get(cost_key, s.get("total_cost", 0.0))
-                if v is None or (isinstance(v, float) and math.isnan(v)):
-                    _tc_list.append(0.0)
+                if basis == "store":
+                    cost_val = usage_qty * (sp / spec_parsed)
                 else:
-                    _tc_list.append(float(v))
-            original_batch_cost = sum(_tc_list) or 0.0
+                    cost_val = usage_qty * (bc / spec_parsed)
+            else:
+                cost_val = 0.0
 
-            scale_factor = cost_val / original_batch_cost if original_batch_cost > 0 else 0.0
+            profit_rate = round(
+                _calc_profit_rate(sp or bc or 0.0, bc or 0.0) * 100, 1
+            )
 
-            semi_cost = 0.0
+            # ── 2级配料 (sub-ingredients) ──
+            sub_items = semi_recipes.get(item, [])
             sub_rows: List[RecipeRow] = []
-
             for sub in sub_items:
                 sub_name = sub["item"]
                 sub_qty = sub["usage_qty"]
-                sub_brand_cost = brand_cost_map.get(sub_name, 0.0)
+                sub_bc = brand_cost_map.get(sub_name, 0.0)
+                sub_sp = store_price_map.get(sub_name, sub_bc or 0.0)
                 sub_spec = spec_map.get(sub_name, "")
-                sub_store_price = store_price_map.get(sub_name, sub_brand_cost or 0.0)
 
-                # Sub-ingredient cost from 产品配方表, scaled to SKU level
-                sub_batch_cost = sub.get(cost_key, sub.get("total_cost", 0.0))
-                if sub_batch_cost is None or (isinstance(sub_batch_cost, float) and math.isnan(sub_batch_cost)):
-                    sub_batch_cost = 0.0
-                sub_sku_cost = float(sub_batch_cost) * scale_factor
-                semi_cost += sub_sku_cost
-                sub_profit_rate = round(_calc_profit_rate(sub_store_price, sub_brand_cost) * 100, 1)
+                # Cost = total cost from 产品配方表 (no scale_factor)
+                if basis == "store":
+                    sub_row_cost = sub_store_cost.get(sub_name, 0.0)
+                else:
+                    sub_row_cost = sub_factory_cost.get(sub_name, 0.0)
 
+                sub_profit_rate = round(
+                    _calc_profit_rate(sub_sp or sub_bc or 0.0, sub_bc or 0.0) * 100, 1
+                )
                 sub_rows.append(RecipeRow(
                     item=sub_name,
                     usage_qty=sub_qty,
                     usage_unit="",
-                    cost=round(sub_sku_cost, 4),
+                    cost=round(sub_row_cost, 4),
                     spec=sub_spec,
-                    store_price=sub_store_price,
-                    brand_cost=round(sub_brand_cost, 4),
+                    store_price=sub_sp,
+                    brand_cost=round(sub_bc, 4),
                     profit_rate=sub_profit_rate,
                     level=LEVEL_SUB,
                     is_semi=False,
                 ))
 
-            # Main semi row (summary) — usage/cost from 产品出品表, pricing from 总原料成本表
-            # spec = sum of recipe batch quantities
-            batch_total = int(sum(s["usage_qty"] for s in sub_items))
             rows.append(RecipeRow(
                 item=item,
                 usage_qty=usage_qty,
                 usage_unit=usage_unit,
                 cost=round(cost_val, 4),
-                spec=str(batch_total) if batch_total > 0 else spec,
-                store_price=store_price_map.get(item, 0.0),
-                brand_cost=round(brand_cost, 4),
-                profit_rate=round(_calc_profit_rate(store_price_map.get(item, 0.0), brand_cost) * 100, 1),
+                spec=spec,
+                store_price=round(sp, 4) if sp else 0.0,
+                brand_cost=round(bc, 4) if bc else 0.0,
+                profit_rate=profit_rate,
                 level=LEVEL_SEMI,
                 is_semi=True,
             ))
             rows.extend(sub_rows)
+
+        else:
+            # ── 1级直接原料: data from 总原料成本表 ──
+            bc = brand_cost_map.get(item, 0.0)
+            sp = store_price_map.get(item, bc or _to_float(b_row["cost"]) or 0.0)
+            spec = spec_map.get(item, "")
+
+            spec_parsed = _parse_spec(spec)
+            if spec_parsed and spec_parsed > 0 and usage_qty > 0:
+                if basis == "store":
+                    calc_cost = usage_qty * (sp / spec_parsed)
+                else:
+                    calc_cost = usage_qty * (bc / spec_parsed)
+            else:
+                calc_cost = _to_float(b_row["cost"]) or 0.0
+
+            profit_rate = round(
+                _calc_profit_rate(sp or bc or 0.0, bc or 0.0) * 100, 1
+            )
+
+            rows.append(RecipeRow(
+                item=item,
+                usage_qty=usage_qty,
+                usage_unit=usage_unit,
+                cost=round(calc_cost, 4),
+                spec=spec,
+                store_price=sp,
+                brand_cost=round(bc, 4),
+                profit_rate=profit_rate,
+                level=LEVEL_DIRECT,
+                is_semi=False,
+            ))
 
     # Build DataFrame
     data = []
