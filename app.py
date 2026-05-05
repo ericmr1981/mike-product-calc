@@ -1244,6 +1244,15 @@ with tab6:
 
     from mike_product_calc.calc.recipe_mgmt import get_product_with_recipes, build_ingredient_pool
 
+    import re as _re
+
+    def _split_version(name: str) -> tuple[str, str]:
+        """Split '木姜子甜橙 2.0' → ('木姜子甜橙', '2.0')"""
+        m = _re.match(r'^(.+?)\s*(\d+\.\d+)$', name.strip())
+        if m:
+            return m.group(1).strip(), m.group(2)
+        return name.strip(), ""
+
     client = st.session_state.supabase
 
     # ── Left column: product list ──
@@ -1264,16 +1273,16 @@ with tab6:
         st.markdown("---")
         with st.expander("➕ 新建产品", expanded=False):
             with st.form("new_product_form"):
-                new_p_name = st.text_input("品名 *")
-                new_p_version = st.text_input("版本")
+                new_p_name = st.text_input("品名 *", placeholder="如 木姜子甜橙 2.0，版本号自动拆分")
                 new_p_category = st.text_input("品类")
                 new_p_type = st.selectbox("制作类型", options=["门店调配", "工厂调配"])
                 new_p_final = st.checkbox("最终成品", value=True)
                 if st.form_submit_button("保存"):
                     if new_p_name:
+                        _name, _version = _split_version(new_p_name)
                         client.create_product({
-                            "name": new_p_name,
-                            "version": new_p_version,
+                            "name": _name,
+                            "version": _version,
                             "category": new_p_category,
                             "production_type": new_p_type,
                             "is_final_product": new_p_final,
@@ -1359,16 +1368,10 @@ with tab6:
                     else:
                         ing_name = str(ref or "")
 
-                # Compute display cost: use recipe's unit_cost or raw material's final_price
-                cost = r.get("unit_cost")
-                if cost is None and isinstance(r.get("raw_material_id"), dict):
-                    cost = r["raw_material_id"].get("final_price")
-
                 recipe_rows.append({
                     "来源": "原料" if r["ingredient_source"] == "raw" else "半成品",
                     "配料": ing_name,
                     "用量": r.get("quantity", 0),
-                    "单位成本": cost if cost else "",
                 })
 
             df_recipes = pd.DataFrame(recipe_rows)
@@ -1397,16 +1400,14 @@ with tab6:
                     selected_prod_id = prod_options[selected_prod]
 
                 qty = st.number_input("用量", min_value=0.0, format="%.2f")
-                unit_cost = st.number_input("单位成本 (可选)", min_value=0.0, format="%.4f")
-                store_unit_cost = st.number_input("门店单位成本 (可选)", min_value=0.0, format="%.4f")
 
                 if st.form_submit_button("添加"):
                     new_recipe = {
                         "product_id": selected_id,
                         "ingredient_source": "raw" if src_type == "原料" else "product",
                         "quantity": qty,
-                        "unit_cost": unit_cost if unit_cost > 0 else None,
-                        "store_unit_cost": store_unit_cost if store_unit_cost > 0 else None,
+                        "unit_cost": None,
+                        "store_unit_cost": None,
                         "sort_order": len(recipes),
                     }
                     if src_type == "原料":
