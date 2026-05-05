@@ -306,7 +306,7 @@ sheet_names = list(wb.sheets.keys())
 
 # ── CLI/UI shared state (disk) ─────────────────────────────────────────
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理", "配方管理"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理", "配方管理", "出品规格"])
 
 with tab1:
     _heading_with_help("Workbook 概览",
@@ -1364,4 +1364,99 @@ with tab6:
                     client.set_recipes(selected_id, existing_recipes)
                     st.success("配料已添加")
                     st.rerun()
+
+# ── Tab7: 出品规格管理 ──────────────────────────────────────
+
+with tab7:
+    _heading_with_help("出品规格管理",
+        "📌 **功能说明**：管理最终产品的售卖规格。一个产品可以有多个规格（小杯/标准杯等），"
+        "每个规格可配置主原料用量和附加配料。\n"
+        "**使用方式**：选择产品 → 管理出品规格 → 保存。")
+
+    client = st.session_state.supabase
+    from mike_product_calc.calc.serving_mgmt import get_final_products
+
+    # ── Product selector ──
+    final_products = get_final_products(client)
+    if not final_products:
+        st.info("暂无最终成品。请先在「配方管理」中创建产品并勾选「最终成品」。")
+        st.stop()
+
+    prod_options = {p["name"]: p["id"] for p in final_products}
+    sel_prod_name = st.selectbox("选择产品", options=list(prod_options.keys()), key="tab7_prod")
+    sel_prod_id = prod_options[sel_prod_name]
+
+    # Load raw materials for packaging and toppings
+    raw_materials = client.list_raw_materials()
+    pkg_options = {rm["name"]: rm["id"] for rm in raw_materials if rm.get("category") in ("包材", None)}
+
+    st.divider()
+
+    # ── Existing specs ──
+    st.subheader("出品规格列表")
+    specs = client.list_serving_specs(sel_prod_id)
+
+    if specs:
+        spec_rows = []
+        for s in specs:
+            topping_names = []
+            spec_rows.append({
+                "id": str(s["id"])[:8],
+                "规格": s["spec_name"],
+                "主原料用量": s.get("quantity", ""),
+                "包材": s.get("packaging_id", "") if isinstance(s.get("packaging_id"), str) else "",
+                "附加配料": ", ".join(topping_names),
+            })
+        st.dataframe(pd.DataFrame(spec_rows), use_container_width=True, hide_index=True)
+
+        if st.button("🗑️ 清空所有规格"):
+            client.set_serving_specs(sel_prod_id, [])
+            st.rerun()
+    else:
+        st.info("暂无出品规格。使用下方表单添加。")
+
+    st.divider()
+
+    # ── Add new spec ──
+    st.subheader("➕ 新增出品规格")
+    with st.form("add_spec_form"):
+        spec_name = st.selectbox("规格名", options=["小杯", "标准杯", "华夫蛋筒", "华夫碗", "自定义..."])
+        if spec_name == "自定义...":
+            spec_name = st.text_input("输入自定义规格名")
+
+        main_qty = st.number_input("主原料用量 (克)", min_value=0.0, format="%.1f")
+
+        st.markdown("##### 包材")
+        pkg_name = st.selectbox("选择包材", options=["(无)"] + list(pkg_options.keys()))
+        pkg_qty = st.number_input("包材用量", min_value=1, value=1)
+        pkg_id = pkg_options.get(pkg_name, "")
+
+        st.markdown("##### 附加配料")
+        all_mat_options = {f"{m['name']} ({m.get('category','')})": m["id"] for m in raw_materials}
+        topping_selections = st.multiselect("选择附加配料", options=list(all_mat_options.keys()))
+
+        submitted = st.form_submit_button("保存出品规格")
+        if submitted:
+            new_spec = {
+                "product_id": sel_prod_id,
+                "spec_name": spec_name,
+                "quantity": main_qty,
+                "packaging_id": pkg_id if pkg_id else None,
+                "packaging_qty": pkg_qty,
+            }
+
+            existing_payload = []
+            for s in specs:
+                existing_payload.append({
+                    "product_id": s["product_id"],
+                    "spec_name": s["spec_name"],
+                    "quantity": s.get("quantity"),
+                    "packaging_id": s.get("packaging_id"),
+                    "packaging_qty": s.get("packaging_qty", 1),
+                })
+            existing_payload.append(new_spec)
+
+            client.set_serving_specs(sel_prod_id, existing_payload)
+            st.success(f"已新增规格: {spec_name}")
+            st.rerun()
 
