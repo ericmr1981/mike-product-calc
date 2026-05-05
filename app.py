@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 import sys
-import tempfile
-import json
-import hashlib
 from datetime import date, datetime
-import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -29,8 +25,6 @@ from mike_product_calc.calc.prep_engine import (
     gaps_only,
     sales_to_production,
 )
-from mike_product_calc.data.loader import load_workbook
-from mike_product_calc.data.validator import issues_to_dataframe, validate_workbook
 from mike_product_calc.calc.profit import sku_profit_table
 from mike_product_calc.model.production import ProductionRow
 
@@ -121,121 +115,30 @@ def _heading_with_help(heading: str, help_text: str):
     )
 
 
-# ── 上传文件持久化（磁盘级，可删除/替换）────────────────────────────────────
-UPLOAD_DIR = ROOT / "data" / "uploads"
-REGISTRY_PATH = UPLOAD_DIR / "registry.json"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# ── Supabase 初始化 ─────────────────────────────────────────
 
-
-def _sha256_bytes(b: bytes) -> str:
-    return hashlib.sha256(b).hexdigest()
-
-
-def _load_registry() -> list[dict]:
-    if not REGISTRY_PATH.exists():
-        return []
-    try:
-        data = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except Exception:
-        return []
-
-
-def _save_registry(items: list[dict]) -> None:
-    REGISTRY_PATH.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _delete_file(file_id: str) -> None:
-    items = _load_registry()
-    keep: list[dict] = []
-    for it in items:
-        if it.get("id") == file_id:
-            saved = it.get("saved_name")
-            if saved:
-                fp = UPLOAD_DIR / saved
-                if fp.exists():
-                    fp.unlink()
-        else:
-            keep.append(it)
-    _save_registry(keep)
-
-
-def _save_upload(bytes_data: bytes, orig_name: str) -> dict:
-    fid = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{_sha256_bytes(bytes_data)[:10]}"
-    safe_name = orig_name.replace('/', '_').replace('\\', '_')
-    saved_name = f"{fid}__{safe_name}"
-    (UPLOAD_DIR / saved_name).write_bytes(bytes_data)
-    return {
-        "id": fid,
-        "orig_name": orig_name,
-        "saved_name": saved_name,
-        "uploaded_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        "size": len(bytes_data),
-        "sha256": _sha256_bytes(bytes_data),
-    }
-
-
-def _resolve_active_workbook() -> tuple[bytes, str, str]:
-    """Return (xlsx_bytes, display_name, resolved_path).
-
-    resolved_path is a real filesystem path usable by CLI/state.
-    """
-
-    # 1) active from registry
-    fid = st.session_state.get('active_file_id', '')
-    if fid:
-        for it in _load_registry():
-            if str(it.get('id')) == str(fid):
-                fp = UPLOAD_DIR / str(it.get('saved_name'))
-                if fp.exists():
-                    return fp.read_bytes(), str(it.get('orig_name') or fp.name), str(fp)
-
-    # 2) fallback: env var
-    _default_xlsx = os.environ.get('MIKE_DEFAULT_XLSX', '')
-    if _default_xlsx and Path(_default_xlsx).exists():
-        p = Path(_default_xlsx)
-        return p.read_bytes(), p.name, str(p)
-
-    # 3) fallback: auto-select the first xlsx in UPLOAD_DIR
-    if UPLOAD_DIR.exists():
-        for candidate in sorted(UPLOAD_DIR.glob('*.xlsx')):
-            if candidate.stat().st_size > 0:
-                entry = {
-                    'id': candidate.stem,
-                    'orig_name': candidate.name,
-                    'saved_name': candidate.name,
-                }
-                return candidate.read_bytes(), candidate.name, str(candidate)
-
-    # 4) fallback: use default xlsx in data/ root
-    for default in sorted(Path('data').glob('*.xlsx')):
-        if default.stat().st_size > 0:
-            return default.read_bytes(), default.name, str(default)
-
-    raise FileNotFoundError('No workbook selected/uploaded')
-
-
+_st_supa = None
+_st_sheets: dict[str, pd.DataFrame] = {}
 try:
-    workbook_bytes, workbook_name, workbook_path = _resolve_active_workbook()
-except FileNotFoundError:
-    st.info('请先在上方上传/选择 xlsx 文件开始。')
+    supabase_url = st.secrets["supabase"]["url"]
+    supabase_key = st.secrets["supabase"]["service_key"]
+    from mike_product_calc.data.supabase_client import MpcSupabaseClient
+    _st_supa = MpcSupabaseClient(supabase_url, supabase_key)
+    from mike_product_calc.data.supabase_adapter import build_sheets
+    _st_sheets = build_sheets(_st_supa)
+except Exception as e:
+    st.error(f"Supabase 连接失败: {e}")
     st.stop()
-@st.cache_data(show_spinner=False)
-def _load_and_validate(bytes_data: bytes):
-    with tempfile.TemporaryDirectory() as td:
-        p = Path(td) / "workbook.xlsx"
-        p.write_bytes(bytes_data)
-        wb = load_workbook(p)
-        # wb is WorkbookData; wb.sheets is Dict[str, pd.DataFrame]
-        # validate_workbook expects Dict[str, pd.DataFrame]
-        issues = validate_workbook(wb.sheets)
-        return wb, issues
+
+# Track supabase client in session state for tabs that need it
+if "supabase" not in st.session_state:
+    st.session_state.supabase = _st_supa
 
 
-with st.spinner("解析中..."):
-    wb, issues = _load_and_validate(workbook_bytes)
-
-sheet_names = list(wb.sheets.keys())
+def _full_name(p: dict) -> str:
+    """Return full name with version e.g. '木姜子甜橙 2.0'."""
+    v = p.get("version", "")
+    return f"{p['name']} {v}".strip() if v else p["name"]
 
 
 # ── CLI/UI shared state (disk) ─────────────────────────────────────────
@@ -243,40 +146,44 @@ sheet_names = list(wb.sheets.keys())
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理", "配方管理", "出品规格"])
 
 with tab1:
-    _heading_with_help("Workbook 概览",
-        "📌 **功能说明**：上传 Excel 文件后，系统自动解析并校验所有 sheet。\n"
-        "**使用方法**：上传蜜可诗产品库.xlsx，等待解析完成后查看统计与校验报告。\n"
-        "**字段含义**：Sheet 数 = 工作簿中 sheet 总数；Issues = 所有校验问题数（含警告）；"
-        "Errors = 高严重性问题（需优先处理）。")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Sheet 数", len(sheet_names))
-    col2.metric("Issues", len(issues))
-    col3.metric("Errors", sum(1 for i in issues if i.severity == "error"))
+    _heading_with_help("数据概览",
+        "📌 **功能说明**：查看 Supabase 中所有数据的统计概览。\n"
+        "**数据源**：Supabase (PostgreSQL)")
+    from mike_product_calc.calc.material_mgmt import get_material_stats
+    _stats = get_material_stats(_st_supa)
+    _prods = _st_supa.list_products()
+    _final = sum(1 for p in _prods if p.get("is_final_product"))
+    _specs_counts = sum(len(_st_supa.list_serving_specs(p["id"])) for p in _prods)
 
-    st.divider()
-
-    st.subheader("数据健康/校验报告")
-    df_issues = issues_to_dataframe(issues)
-    st.dataframe(df_issues, use_container_width=True, height=360, hide_index=True)
-
-    csv = df_issues.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "下载 data_validation_report.csv",
-        data=csv,
-        file_name="data_validation_report.csv",
-        mime="text/csv",
-    )
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("原料总数", _stats["total"])
+    col2.metric("已上线", _stats["active"])
+    col3.metric("产品数", len(_prods))
+    col4.metric("最终成品", _final)
+    col5.metric("出品规格", _specs_counts)
 
 
 with tab2:
-    _heading_with_help("Sheet 浏览",
-        "📌 **功能说明**：浏览工作簿中任意 sheet 的原始数据。\n"
-        "**使用方法**：下拉选择 sheet 名称，查看行列数据。\n"
-        "**字段含义**：Rows=数据行数；Cols=列数；表格内容即对应 sheet 的原始数据。")
-    selected = st.selectbox("选择 sheet", sheet_names)
-    df = wb.sheets[selected]
-    st.write(f"Rows: {df.shape[0]} | Cols: {df.shape[1]}")
-    st.dataframe(df.head(200), use_container_width=True, height=420, hide_index=True)
+    _heading_with_help("Supabase 数据浏览",
+        "📌 **功能说明**：浏览 Supabase 中各表的数据。\n"
+        "**使用方式**：下拉选择表名，查看数据内容。")
+    _table_names = {
+        "raw_materials": "原料表",
+        "products": "产品表",
+        "recipes": "配方明细",
+        "serving_specs": "出品规格",
+        "serving_spec_toppings": "出品规格附加配料",
+    }
+    _sel_table = st.selectbox("选择表", options=list(_table_names.keys()),
+        format_func=lambda x: f"{_table_names.get(x, x)} ({x})")
+    try:
+        _table_data = _st_supa._client.table(_sel_table).select("*").limit(200).execute().data
+        if _table_data:
+            st.dataframe(pd.DataFrame(_table_data), use_container_width=True, height=420, hide_index=True)
+        else:
+            st.info("表为空")
+    except Exception as e:
+        st.error(f"读取失败: {e}")
 
 # ── Tab4: 原料价格模拟器（重设计）────────────────────────────────
 
@@ -290,15 +197,8 @@ with tab3:
         "**使用方法**：选择产品 → 选 SKU 规格 → 在配方表中调整门店价格或在右侧调售价 → 保存方案对比。")
     st.caption("三步递进：选择产品 → SKU 规格毛利 → 配方明细与调价")
 
-    # ── Data source: Supabase if available ──
-    _sheets = wb.sheets
-    if "supabase" in st.session_state:
-        try:
-            from mike_product_calc.data.supabase_adapter import build_sheets
-            _supa_sheets = build_sheets(st.session_state.supabase)
-            _sheets = {**wb.sheets, **{k: v for k, v in _supa_sheets.items() if not v.empty}}
-        except Exception:
-            pass
+    # ── Data source: Supabase ──
+    _sheets = _st_sheets
 
     # ── Step 1: Select product ──────────────────────────────────────
     all_profit = sku_profit_table(_sheets, basis="store", only_status=None)
@@ -598,29 +498,29 @@ with tab3:
                         st.dataframe(diff, use_container_width=True, height=420, hide_index=True)
 # ── Tab5: 产销计划 ────────────────────────────────────────────────────
 
-# Build SKU list from workbook for dropdown
-_profit_df = sku_profit_table(wb.sheets, basis="factory", only_status=None)
+# Build SKU list from Supabase
+_profit_df = sku_profit_table(_st_sheets, basis="factory", only_status=None)
 _all_skus = sorted(_profit_df["product_key"].dropna().unique().tolist())
 
-# Production SKU pool: 配方表品名 + 配方表配料 + 出品表配料
-_production_skus_list: list[str] = []
-for _sname in wb.sheets:
-    if "产品配方表" in _sname or "半成品配方表" in _sname:
-        _df = wb.sheets[_sname]
-        for _col in ("品名", "配料"):
-            if _col in _df.columns:
-                for _v in _df[_col].dropna().unique():
-                    _v_str = str(_v).strip()
-                    if _v_str and _v_str not in ("nan", "") and _v_str not in _production_skus_list:
-                        _production_skus_list.append(_v_str)
-    elif "产品出品表" in _sname:
-        _df = wb.sheets[_sname]
-        if "配料" in _df.columns:
-            for _v in _df["配料"].dropna().unique():
-                _v_str = str(_v).strip()
-                if _v_str and _v_str not in ("nan", "") and _v_str not in _production_skus_list:
-                    _production_skus_list.append(_v_str)
-_production_skus = sorted(_production_skus_list)
+# Production SKU pool: product names + ingredient names + serving spec toppings
+_production_skus_set: set[str] = set()
+for _prod in _st_supa.list_products():
+    _full = _full_name(_prod)
+    if _full:
+        _production_skus_set.add(_full)
+    for _r in (_st_supa.list_recipes(_prod["id"]) or []):
+        _ing_name = _get_ingredient_name(_r) if '_get_ingredient_name' in dir() else ''
+        if isinstance(_r.get("raw_material_id"), dict):
+            _production_skus_set.add(_r["raw_material_id"].get("name", ""))
+        elif isinstance(_r.get("ref_product_id"), dict):
+            _production_skus_set.add(_r["ref_product_id"].get("name", ""))
+    if _prod.get("is_final_product"):
+        for _sp in (_st_supa.list_serving_specs(_prod["id"]) or []):
+            for _t in _sp.get("serving_spec_toppings", []):
+                _tm = _t.get("material_id")
+                if isinstance(_tm, dict):
+                    _production_skus_set.add(_tm.get("name", ""))
+_production_skus = sorted(n for n in _production_skus_set if n and n not in ("nan", ""))
 
 
 def _parse_date(s) -> Optional[date]:
@@ -781,7 +681,7 @@ with tab4:
                 st.warning(f"⚠️ {len(no_spec_rows)} 行销售计划缺少规格信息（SKU 中无「|规格」且「规格」列为空），"
                            f"可能匹配多个出品规格导致数量偏高。建议补充规格后重新生成。")
             with st.spinner("根据配方展开生产计划…"):
-                prod_rows = sales_to_production(sales_rows, wb.sheets, lead_days=lead_days)
+                prod_rows = sales_to_production(sales_rows, _st_sheets, lead_days=lead_days)
             if prod_rows:
                 plans[PROD_KEY] = prod_rows
                 st.session_state["prod_gen_version"] += 1
@@ -898,7 +798,7 @@ with tab4:
                 with st.spinner("BOM 展开中…"):
                     t0 = datetime.now()
                     result = bom_expand_multi(
-                        wb.sheets, sku_qty,
+                        _st_sheets, sku_qty,
                         order_date=target_date, basis=bom_basis,
                         default_lead_days=bom_lead_days,
                         default_loss_rate=bom_loss_rate,
@@ -1067,18 +967,6 @@ with tab5:
                 result = execute_sync_raw_materials(raw_wb.sheets, client)
                 st.success(f"同步完成: 新增 {result.inserts}, 更新 {result.updates}")
                 st.rerun()
-
-    # ── Sync from current workbook ──
-    with st.expander("📥 从当前工作簿同步", expanded=False):
-        st.caption("将当前已加载 Excel 中总原料成本表的数据同步到 Supabase。")
-        if st.button("预览差异"):
-            diffs = preview_sync_raw_materials(wb.sheets, client)
-            df_diff = pd.DataFrame(diffs)
-            st.dataframe(df_diff, use_container_width=True, hide_index=True)
-        if st.button("确认执行同步", key="sync_current"):
-            result = execute_sync_raw_materials(wb.sheets, client)
-            st.success(f"同步完成: 新增 {result.inserts}, 更新 {result.updates}")
-            st.rerun()
 
     # ── Filters ──
     categories = ["全部"] + get_categories(client)
@@ -1308,13 +1196,8 @@ with tab6:
                     else:
                         st.error("品名不能为空")
 
-        # Sync from Excel
-        if st.button("📥 从 Excel 同步产品"):
-            from mike_product_calc.sync.excel_sync import execute_sync_products_recipes
-            with st.spinner("同步中..."):
-                result = execute_sync_products_recipes(wb.sheets, client)
-            st.success(f"同步完成: 新增 {result.inserts} 个产品")
-            st.rerun()
+        # All data is from Supabase
+        st.caption("数据来源: Supabase")
 
     with col_right:
         # ── Product detail ──

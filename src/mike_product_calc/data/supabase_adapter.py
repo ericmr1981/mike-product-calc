@@ -1,7 +1,8 @@
 """Build pandas DataFrames from Supabase data, matching Excel sheet formats.
 
-Allows existing calc modules (profit, recipe) to work with Supabase data
-without modification.
+All existing calc modules (profit, recipe, prep_engine) work with
+`dict[str, pd.DataFrame]`. This adapter builds that dict from Supabase,
+so calc modules work unchanged.
 """
 from __future__ import annotations
 
@@ -16,11 +17,16 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
     """Build a dict of DataFrames matching Excel sheet names and columns.
 
     Returns: {sheet_name: DataFrame} compatible with calc modules.
+    Empty dict if Supabase has no data.
     """
     sheets: dict[str, pd.DataFrame] = {}
 
+    raw_materials = _safe_call(client.list_raw_materials) or []
+    products = _safe_call(client.list_products) or []
+    if not products:
+        return sheets
+
     # ── 总原料成本表 ──
-    raw_materials = client.list_raw_materials()
     if raw_materials:
         rows = []
         for m in raw_materials:
@@ -38,31 +44,16 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
         sheets["总原料成本表"] = pd.DataFrame(rows)
 
     # ── 产品配方表_Gelato ──
-    products = client.list_products()
     recipe_rows = []
     for prod in products:
-        recipes = client.list_recipes(prod["id"])
-        # recipes returns raw_material_id as expanded dict or id string
+        recipes = _safe_call(lambda: client.list_recipes(prod["id"])) or []
         for r in recipes:
-            ing_name = ""
-            ing_source = r.get("ingredient_source", "raw")
-            if ing_source == "raw":
-                rm = r.get("raw_material_id")
-                if isinstance(rm, dict):
-                    ing_name = rm.get("name", "")
-                elif isinstance(rm, str):
-                    ing_name = str(rm)
-            else:
-                rp = r.get("ref_product_id")
-                if isinstance(rp, dict):
-                    ing_name = rp.get("name", "")
-                elif isinstance(rp, str):
-                    ing_name = str(rp)
+            ing_name = _get_ingredient_name(r)
             if not ing_name:
                 continue
             recipe_rows.append({
                 "品类": prod.get("category", ""),
-                "品名": f"{prod['name']} {prod.get('version','')}".strip(),
+                "品名": _full_name(prod),
                 "配料": ing_name,
                 "用量": r.get("quantity", 0),
             })
@@ -74,16 +65,10 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
     for prod in products:
         if not prod.get("is_final_product", False):
             continue
-        specs = client.list_serving_specs(prod["id"])
+        specs = _safe_call(lambda: client.list_serving_specs(prod["id"])) or []
         for sp in specs:
-            # Main material row
             mm = sp.get("main_material_id")
-            mm_name = ""
-            if isinstance(mm, dict):
-                v = mm.get("version", "")
-                mm_name = f"{mm['name']} {v}".strip() if v else mm["name"]
-            elif isinstance(mm, str):
-                mm_name = str(mm)
+            mm_name = _get_prod_name(mm) if isinstance(mm, dict) else str(mm or "")
             if mm_name:
                 serving_rows.append({
                     "品类": prod.get("category", ""),
@@ -93,14 +78,8 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
                     "配料": "",
                     "用量": sp.get("quantity", 0),
                 })
-            # Topping rows
             for t in sp.get("serving_spec_toppings", []):
-                t_mat = t.get("material_id")
-                t_name = ""
-                if isinstance(t_mat, dict):
-                    t_name = t_mat.get("name", "")
-                elif isinstance(t_mat, str):
-                    t_name = str(t_mat)
+                t_name = _get_mat_name(t.get("material_id"))
                 if t_name:
                     serving_rows.append({
                         "品类": prod.get("category", ""),
@@ -113,16 +92,15 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
     if serving_rows:
         sheets["产品出品表_Gelato"] = pd.DataFrame(serving_rows)
 
-    # ── 产品毛利表_Gelato (computed from serving + raw material prices) ──
-    # Build a basic version with serving specs and their costs
+    # ── 产品毛利表_Gelato (computed) ──
     profit_rows = []
     for prod in products:
         if not prod.get("is_final_product", False):
             continue
-        specs = client.list_serving_specs(prod["id"])
+        specs = _safe_call(lambda: client.list_serving_specs(prod["id"])) or []
         for sp in specs:
             mm = sp.get("main_material_id")
-            cost = 0
+            cost = 0.0
             if isinstance(mm, dict):
                 cost = float(mm.get("final_price") or 0) * float(sp.get("quantity", 0))
             profit_rows.append({
@@ -131,20 +109,84 @@ def build_sheets(client: MpcSupabaseClient) -> dict[str, pd.DataFrame]:
                 "规格": sp["spec_name"],
                 "状态": prod.get("status", "上线"),
                 "成本": _f(cost),
-                "定价": 0,
+                "门店成本": _f(cost),
+                "定价": 0.0,
+                "门店定价": 0.0,
                 "毛利率": "",
+                "门店毛利率": "",
             })
     if profit_rows:
         sheets["产品毛利表_Gelato"] = pd.DataFrame(profit_rows)
 
+    # ── 产品成本计算表_Gelato (computed) ──
+    cost_rows = []
+    for prod in products:
+        full_name = _full_name(prod)
+        specs = _safe_call(lambda: client.list_serving_specs(prod["id"])) or []
+        serving_qty = 0
+        for sp in specs:
+            mm = sp.get("main_material_id")
+            if isinstance(mm, dict) and _full_name(mm) == full_name:
+                serving_qty += float(sp.get("quantity", 0))
+        cost_rows.append({
+            "品类": prod.get("category", ""),
+            "品名": full_name,
+            "100克成本": "",
+            "制作类型": prod.get("production_type", ""),
+            "规格": str(int(serving_qty)) if serving_qty else "",
+            "状态": prod.get("status", "上线"),
+            "成本": "",
+            "单位成本": "",
+            "门店成本": "",
+            "门店单位成本": "",
+        })
+    if cost_rows:
+        sheets["产品成本计算表_Gelato"] = pd.DataFrame(cost_rows)
+
     return sheets
 
 
+def _full_name(p: dict) -> str:
+    """Return full name with version e.g. '木姜子甜橙 2.0'."""
+    v = p.get("version", "")
+    return f"{p['name']} {v}".strip() if v else p["name"]
+
+
+def _get_ingredient_name(r: dict) -> str:
+    """Extract ingredient name from a recipe record (may contain joined object)."""
+    source = r.get("ingredient_source", "raw")
+    if source == "raw":
+        return _get_mat_name(r.get("raw_material_id"))
+    return _get_prod_name(r.get("ref_product_id"))
+
+
+def _get_mat_name(val: Any) -> str:
+    """Extract material name from joined object or raw string."""
+    if isinstance(val, dict):
+        return val.get("name", "")
+    return str(val or "")
+
+
+def _get_prod_name(val: Any) -> str:
+    """Extract product full name from joined object or raw string."""
+    if isinstance(val, dict):
+        v = val.get("version", "")
+        return f"{val['name']} {v}".strip() if v else val["name"]
+    return str(val or "")
+
+
 def _f(val: Any) -> float | None:
-    """Convert value to float or None."""
     if val is None:
         return None
     try:
-        return float(val)
+        return round(float(val), 4)
     except (ValueError, TypeError):
         return None
+
+
+def _safe_call(fn, default=None):
+    """Call a function, return default on exception (connection issues)."""
+    try:
+        return fn()
+    except Exception:
+        return default
