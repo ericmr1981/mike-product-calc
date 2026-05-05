@@ -306,7 +306,7 @@ sheet_names = list(wb.sheets.keys())
 
 # ── CLI/UI shared state (disk) ─────────────────────────────────────────
 
-tab1, tab2, tab3, tab4 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理"])
 
 with tab1:
     _heading_with_help("Workbook 概览",
@@ -1072,4 +1072,114 @@ with tab4:
         st.info("BOM 展开结果为空（可能选中的 SKU 在出品表中无配料数据）。")
     else:
         st.info("👆 完成 Step 2 后，在上方设置参数并点击「展开 BOM」，查看原料需求与成本。")
+
+# ── Tab5: 原料管理 ──────────────────────────────────────────
+
+with tab5:
+    _heading_with_help("原料管理",
+        "📌 **功能说明**：管理所有采购原料的信息。支持 CRUD 操作，并可从 Excel 同步。\n"
+        "**字段说明**：编码=品项编码；名称=品项名称；类别=调味酱/包材/乳制品等；"
+        "单价=加价后有效采购价。")
+
+    from mike_product_calc.calc.material_mgmt import get_categories, get_material_stats, search_materials
+    from mike_product_calc.sync.excel_sync import preview_sync_raw_materials, execute_sync_raw_materials
+
+    # ── Init Supabase client ──
+    if "supabase" not in st.session_state:
+        try:
+            supabase_url = st.secrets["supabase"]["url"]
+            supabase_key = st.secrets["supabase"]["service_key"]
+            from mike_product_calc.data.supabase_client import MpcSupabaseClient
+            st.session_state.supabase = MpcSupabaseClient(supabase_url, supabase_key)
+        except Exception as e:
+            st.error(f"Supabase 连接失败: {e}")
+            st.stop()
+
+    client = st.session_state.supabase
+
+    # ── Stats row ──
+    stats = get_material_stats(client)
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    col_s1.metric("原料总数", stats["total"])
+    col_s2.metric("已生效", stats["active"])
+    col_s3.metric("已失效", stats["inactive"])
+    col_s4.metric("类别数", len(stats["by_category"]))
+
+    # ── Sync from Excel ──
+    with st.expander("📥 从 Excel 同步", expanded=False):
+        st.caption("将 Excel 中总原料成本表的数据同步到 Supabase。")
+        if st.button("预览差异"):
+            diffs = preview_sync_raw_materials(wb.sheets, client)
+            df_diff = pd.DataFrame(diffs)
+            st.dataframe(df_diff, use_container_width=True, hide_index=True)
+            if st.button("确认执行同步"):
+                result = execute_sync_raw_materials(wb.sheets, client)
+                st.success(f"同步完成: 新增 {result.inserts}, 更新 {result.updates}")
+                st.rerun()
+
+    # ── Filters ──
+    categories = ["全部"] + get_categories(client)
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        filter_cat = st.selectbox("类别过滤", options=categories, key="tab5_cat")
+    with col_f2:
+        filter_status = st.selectbox("状态", options=["全部", "已生效", "已失效"], key="tab5_status")
+
+    search_term = st.text_input("搜索", placeholder="输入原料名称...", key="tab5_search")
+
+    # ── Material list ──
+    materials = client.list_raw_materials(
+        category=filter_cat if filter_cat != "全部" else None,
+        search=search_term if search_term else None,
+    )
+    if filter_status != "全部":
+        materials = [m for m in materials if m.get("status") == filter_status]
+
+    df_materials = pd.DataFrame(materials)
+    if not df_materials.empty:
+        display_cols = ["code", "name", "category", "final_price", "unit", "status"]
+        available = [c for c in display_cols if c in df_materials.columns]
+        df_display = df_materials[available].copy()
+        df_display.columns = ["编码", "名称", "类别", "单价", "单位", "状态"]
+        st.dataframe(df_display, use_container_width=True, height=400, hide_index=True)
+    else:
+        st.info("暂无原料数据。请先通过 Excel 同步导入。")
+
+    # ── CRUD: Add new ──
+    with st.expander("➕ 新增原料", expanded=False):
+        with st.form("new_material_form"):
+            cols = st.columns(3)
+            with cols[0]:
+                new_code = st.text_input("编码")
+                new_name = st.text_input("名称 *")
+                new_category = st.selectbox("类别", options=get_categories(client) + ["新增类别..."])
+                if new_category == "新增类别...":
+                    new_category = st.text_input("输入新类别")
+            with cols[1]:
+                new_unit = st.text_input("单位")
+                new_base_price = st.number_input("加价前单价", min_value=0.0, format="%.4f")
+                new_final_price = st.number_input("加价后单价 *", min_value=0.0, format="%.4f")
+            with cols[2]:
+                new_item_type = st.selectbox("品项类型", options=["普通", "特殊"])
+                new_status = st.selectbox("状态", options=["已生效", "已失效"])
+                new_notes = st.text_area("备注")
+
+            submitted = st.form_submit_button("保存")
+            if submitted:
+                if not new_name:
+                    st.error("名称不能为空")
+                else:
+                    client.create_raw_material({
+                        "code": new_code,
+                        "name": new_name,
+                        "category": new_category if new_category != "新增类别..." else "",
+                        "unit": new_unit,
+                        "base_price": new_base_price,
+                        "final_price": new_final_price,
+                        "item_type": new_item_type,
+                        "status": new_status,
+                        "notes": new_notes,
+                    })
+                    st.success(f"已新增: {new_name}")
+                    st.rerun()
 
