@@ -1119,7 +1119,7 @@ with tab5:
             diffs = preview_sync_raw_materials(raw_wb.sheets, client)
             df_diff = pd.DataFrame(diffs)
             st.dataframe(df_diff, use_container_width=True, hide_index=True)
-            if st.button("确认执行同步"):
+            if st.button("确认执行同步", key="sync_upload"):
                 result = execute_sync_raw_materials(raw_wb.sheets, client)
                 st.success(f"同步完成: 新增 {result.inserts}, 更新 {result.updates}")
                 st.rerun()
@@ -1131,7 +1131,7 @@ with tab5:
             diffs = preview_sync_raw_materials(wb.sheets, client)
             df_diff = pd.DataFrame(diffs)
             st.dataframe(df_diff, use_container_width=True, hide_index=True)
-        if st.button("确认执行同步"):
+        if st.button("确认执行同步", key="sync_current"):
             result = execute_sync_raw_materials(wb.sheets, client)
             st.success(f"同步完成: 新增 {result.inserts}, 更新 {result.updates}")
             st.rerun()
