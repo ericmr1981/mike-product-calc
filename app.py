@@ -126,8 +126,8 @@ try:
     _st_supa = MpcSupabaseClient(supabase_url, supabase_key)
     from mike_product_calc.data.supabase_adapter import build_sheets
     _st_sheets = build_sheets(_st_supa)
-except Exception as e:
-    st.error(f"Supabase 连接失败: {e}")
+except Exception as _e:
+    st.error(f"Supabase 连接失败: {_e}")
     st.stop()
 
 # Track supabase client in session state for tabs that need it
@@ -140,8 +140,6 @@ def _full_name(p: dict) -> str:
     v = p.get("version", "")
     return f"{p['name']} {v}".strip() if v else p["name"]
 
-
-# ── CLI/UI shared state (disk) ─────────────────────────────────────────
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理", "配方管理", "出品规格"])
 
