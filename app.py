@@ -1347,15 +1347,28 @@ with tab6:
             for r in recipes:
                 ing_name = ""
                 if r["ingredient_source"] == "raw":
-                    ing_name = r.get("raw_material_id", "")
+                    raw = r.get("raw_material_id")
+                    if isinstance(raw, dict):
+                        ing_name = raw.get("name", "")
+                    else:
+                        ing_name = str(raw or "")
                 elif r["ingredient_source"] == "product":
-                    ing_name = r.get("ref_product_id", "")
+                    ref = r.get("ref_product_id")
+                    if isinstance(ref, dict):
+                        ing_name = ref.get("name", "")
+                    else:
+                        ing_name = str(ref or "")
+
+                # Compute display cost: use recipe's unit_cost or raw material's final_price
+                cost = r.get("unit_cost")
+                if cost is None and isinstance(r.get("raw_material_id"), dict):
+                    cost = r["raw_material_id"].get("final_price")
+
                 recipe_rows.append({
-                    "id": r["id"],
                     "来源": "原料" if r["ingredient_source"] == "raw" else "半成品",
                     "配料": ing_name,
                     "用量": r.get("quantity", 0),
-                    "单位成本": r.get("unit_cost", 0),
+                    "单位成本": cost if cost else "",
                 })
 
             df_recipes = pd.DataFrame(recipe_rows)
@@ -1401,11 +1414,17 @@ with tab6:
                     else:
                         new_recipe["ref_product_id"] = selected_prod_id
 
+                    def _extract_id(val):
+                        """Extract UUID from expanded object or plain string."""
+                        if isinstance(val, dict):
+                            return val.get("id")
+                        return val
+
                     existing_recipes = [{
                         "product_id": r["product_id"],
                         "ingredient_source": r["ingredient_source"],
-                        "raw_material_id": r.get("raw_material_id", None),
-                        "ref_product_id": r.get("ref_product_id", None),
+                        "raw_material_id": _extract_id(r.get("raw_material_id")),
+                        "ref_product_id": _extract_id(r.get("ref_product_id")),
                         "quantity": r["quantity"],
                         "unit_cost": r.get("unit_cost"),
                         "store_unit_cost": r.get("store_unit_cost"),

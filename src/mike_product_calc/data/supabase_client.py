@@ -133,7 +133,11 @@ class MpcSupabaseClient:
     # ------------------------------------------------------------------
 
     def list_recipes(self, product_id: str) -> list[dict]:
-        params = {"product_id": f"eq.{product_id}", "order": "id"}
+        params = {
+            "product_id": f"eq.{product_id}",
+            "order": "sort_order",
+            "select": "*,raw_material_id(*),ref_product_id(*)",
+        }
         resp = requests.get(f"{self._base}/recipes", headers=self._headers(), params=params)
         resp.raise_for_status()
         return resp.json()
