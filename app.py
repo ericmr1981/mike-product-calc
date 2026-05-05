@@ -1473,90 +1473,134 @@ with tab7:
     _heading_with_help("出品规格管理",
         "📌 **功能说明**：管理最终产品的售卖规格。一个产品可以有多个规格（小杯/标准杯等），"
         "每个规格可配置主原料用量和附加配料。\n"
-        "**使用方式**：选择产品 → 管理出品规格 → 保存。")
+        "**使用方式**：选择产品 → 编辑出品规格 → 保存。")
 
     client = st.session_state.supabase
     from mike_product_calc.calc.serving_mgmt import get_final_products
 
-    # ── Product selector ──
-    final_products = get_final_products(client)
-    if not final_products:
-        st.info("暂无最终成品。请先在「配方管理」中创建产品并勾选「最终成品」。")
-        st.stop()
+    # ── Left column: product list ──
+    col_left7, col_right7 = st.columns([1, 2])
 
-    prod_options = {p["name"]: p["id"] for p in final_products}
-    sel_prod_name = st.selectbox("选择产品", options=list(prod_options.keys()), key="tab7_prod")
-    sel_prod_id = prod_options[sel_prod_name]
+    with col_left7:
+        st.subheader("产品列表")
+        final_products = get_final_products(client)
+        if not final_products:
+            st.info("暂无最终成品。请先在「配方管理」中创建产品并勾选「最终成品」。")
+            st.stop()
 
-    # Load raw materials for packaging and toppings
-    raw_materials = client.list_raw_materials()
-    pkg_options = {rm["name"]: rm["id"] for rm in raw_materials if rm.get("category") in ("包材", None)}
+        prod_options = {p["name"]: p["id"] for p in final_products}
+        sel_prod_name = st.selectbox("选择产品", options=list(prod_options.keys()), key="tab7_prod")
+        sel_prod_id = prod_options[sel_prod_name]
 
-    st.divider()
-
-    # ── Existing specs ──
-    st.subheader("出品规格列表")
-    specs = client.list_serving_specs(sel_prod_id)
-
-    if specs:
-        spec_rows = []
-        for s in specs:
-            topping_names = []
-            spec_rows.append({
-                "id": str(s["id"])[:8],
-                "规格": s["spec_name"],
-                "主原料用量": s.get("quantity", ""),
-                "包材": s.get("packaging_id", "") if isinstance(s.get("packaging_id"), str) else "",
-                "附加配料": ", ".join(topping_names),
-            })
-        st.dataframe(pd.DataFrame(spec_rows), use_container_width=True, hide_index=True)
-
-        if st.button("🗑️ 清空所有规格"):
-            client.set_serving_specs(sel_prod_id, [])
+        st.markdown("---")
+        if st.button("🔄 刷新规格"):
             st.rerun()
-    else:
-        st.info("暂无出品规格。使用下方表单添加。")
 
-    st.divider()
+    with col_right7:
+        # ── Product info ──
+        prod_data = client.get_product(sel_prod_id)
+        st.subheader(f"📋 {prod_data['name']} — 出品规格")
 
-    # ── Add new spec ──
-    st.subheader("➕ 新增出品规格")
-    with st.form("add_spec_form"):
-        spec_name = st.selectbox("规格名", options=["小杯", "标准杯", "华夫蛋筒", "华夫碗", "自定义..."])
-        if spec_name == "自定义...":
-            spec_name = st.text_input("输入自定义规格名")
-
-        main_qty = st.number_input("主原料用量 (克)", min_value=0.0, format="%.1f")
-
-        st.markdown("##### 包材")
-        pkg_name = st.selectbox("选择包材", options=["(无)"] + list(pkg_options.keys()))
-        pkg_qty = st.number_input("包材用量", min_value=1, value=1)
-        pkg_id = pkg_options.get(pkg_name, "")
-
-        st.markdown("##### 附加配料")
+        # Load pools
+        raw_materials = client.list_raw_materials()
         all_mat_options = {f"{m['name']} ({m.get('category','')})": m["id"] for m in raw_materials}
-        topping_selections = st.multiselect("选择附加配料", options=list(all_mat_options.keys()))
+        pkg_options = {rm["name"]: rm["id"] for rm in raw_materials if rm.get("category") in ("包材", None)}
 
-        submitted = st.form_submit_button("保存出品规格")
-        if submitted:
-            new_spec = {
-                "product_id": sel_prod_id,
-                "spec_name": spec_name,
-                "quantity": main_qty,
-                "packaging_id": pkg_id if pkg_id else None,
-                "packaging_qty": pkg_qty,
-            }
+        # ── Existing specs ──
+        specs = client.list_serving_specs(sel_prod_id)
 
-            existing_payload = []
-            for s in specs:
+        if specs:
+            for i, s in enumerate(specs):
+                # Extract topping names
+                topping_names = []
+                for t in s.get("serving_spec_toppings", []):
+                    mat = t.get("material_id")
+                    if isinstance(mat, dict):
+                        topping_names.append(f"{mat.get('name','')}×{t.get('quantity',1)}")
+                    elif isinstance(mat, str):
+                        topping_names.append(f"{mat}×{t.get('quantity',1)}")
+
+                # Extract packaging name
+                pkg_name = ""
+                pkg = s.get("packaging_id")
+                if isinstance(pkg, dict):
+                    pkg_name = pkg.get("name", "")
+                elif isinstance(pkg, str):
+                    pkg_name = str(pkg)
+
+                with st.container(border=True):
+                    col_s1, col_s2 = st.columns([3, 1])
+                    with col_s1:
+                        st.markdown(f"**{s['spec_name']}**")
+                        st.caption(f"主原料用量: {s.get('quantity', '')} 克" if s.get('quantity') else "")
+                        if pkg_name:
+                            st.caption(f"包材: {pkg_name}")
+                        if topping_names:
+                            st.caption(f"附加配料: {', '.join(topping_names)}")
+                    with col_s2:
+                        if st.button("🗑️ 删除", key=f"del_spec_{s['id']}"):
+                            remaining = [sp for sp in specs if sp["id"] != s["id"]]
+                            # Normalize for re-insertion
+                            normalized = [{
+                                "product_id": sp["product_id"],
+                                "spec_name": sp["spec_name"],
+                                "quantity": sp.get("quantity"),
+                                "packaging_id": _extract_id(sp.get("packaging_id")),
+                                "packaging_qty": sp.get("packaging_qty", 1),
+                            } for sp in remaining]
+                            client.set_serving_specs(sel_prod_id, normalized)
+                            st.rerun()
+
+            if st.button("🗑️ 清空全部规格"):
+                client.set_serving_specs(sel_prod_id, [])
+                st.rerun()
+        else:
+            st.info("暂无出品规格。使用下方表单添加。")
+
+        st.divider()
+
+        # ── Add new spec ──
+        st.subheader("➕ 新增出品规格")
+        with st.form("add_spec_form7"):
+            new_spec_name = st.selectbox("规格名", options=["小杯", "标准杯", "华夫蛋筒", "华夫碗", "自定义..."],
+                key="new_spec_name")
+            if new_spec_name == "自定义...":
+                new_spec_name = st.text_input("输入自定义规格名", key="custom_spec_name")
+
+            col_q1, col_q2 = st.columns(2)
+            with col_q1:
+                new_main_qty = st.number_input("主原料用量 (克)", min_value=0.0, format="%.1f", value=120.0)
+            with col_q2:
+                new_pkg_select = st.selectbox("包材", options=["(无)"] + list(pkg_options.keys()), key="new_pkg")
+                new_pkg_qty = st.number_input("包材用量", min_value=1, value=1, key="new_pkg_qty")
+
+            new_toppings = st.multiselect("附加配料", options=list(all_mat_options.keys()), key="new_toppings")
+
+            if st.form_submit_button("保存规格", type="primary"):
+                new_pkg_id = pkg_options.get(new_pkg_select, "") if new_pkg_select != "(无)" else None
+
+                # Preserve existing specs + add new one
+                existing_payload = []
+                for sp in specs:
+                    existing_payload.append({
+                        "product_id": sp["product_id"],
+                        "spec_name": sp["spec_name"],
+                        "quantity": sp.get("quantity"),
+                        "packaging_id": _extract_id(sp.get("packaging_id")),
+                        "packaging_qty": sp.get("packaging_qty", 1),
+                    })
+
                 existing_payload.append({
-                    "product_id": s["product_id"],
-                    "spec_name": s["spec_name"],
-                    "quantity": s.get("quantity"),
-                    "packaging_id": s.get("packaging_id"),
-                    "packaging_qty": s.get("packaging_qty", 1),
+                    "product_id": sel_prod_id,
+                    "spec_name": new_spec_name,
+                    "quantity": new_main_qty,
+                    "packaging_id": new_pkg_id,
+                    "packaging_qty": new_pkg_qty,
                 })
-            existing_payload.append(new_spec)
+
+                client.set_serving_specs(sel_prod_id, existing_payload)
+                st.success(f"已新增规格: {new_spec_name}")
+                st.rerun()
 
             client.set_serving_specs(sel_prod_id, existing_payload)
             st.success(f"已新增规格: {spec_name}")

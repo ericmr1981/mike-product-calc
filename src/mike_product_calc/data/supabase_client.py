@@ -162,7 +162,11 @@ class MpcSupabaseClient:
     # ------------------------------------------------------------------
 
     def list_serving_specs(self, product_id: str) -> list[dict]:
-        params = {"product_id": f"eq.{product_id}", "order": "id"}
+        params = {
+            "product_id": f"eq.{product_id}",
+            "order": "spec_name",
+            "select": "*,serving_spec_toppings(*,material_id(*)),packaging_id(*)",
+        }
         resp = requests.get(
             f"{self._base}/serving_specs", headers=self._headers(), params=params
         )
