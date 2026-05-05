@@ -89,6 +89,7 @@ def _parse_raw_materials(sheets: dict[str, pd.DataFrame]) -> list[dict]:
                 "category": str(row.get("品项类别", "")).strip(),
                 "item_type": str(row.get("品项类型", "普通")).strip(),
                 "unit": str(row.get("订货单位", "")).strip(),
+                "unit_amount": _to_num(row.get("单位量")),
                 "base_price": _to_num(row.get("加价前单价")),
                 "final_price": _to_num(row.get("加价后单价")),
                 "status": _map_status(str(row.get("生效状态", "已生效")).strip()),

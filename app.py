@@ -1156,10 +1156,10 @@ with tab5:
 
     df_materials = pd.DataFrame(all_materials)
     if not df_materials.empty:
-        display_cols = ["code", "name", "category", "final_price", "unit", "status"]
+        display_cols = ["code", "name", "category", "base_price", "final_price", "unit_amount", "unit", "status"]
         available = [c for c in display_cols if c in df_materials.columns]
         df_display = df_materials[available].copy()
-        df_display.columns = ["编码", "名称", "类别", "单价", "单位", "状态"]
+        df_display.columns = ["编码", "名称", "类别", "成本", "单价", "单位量", "单位", "状态"]
         st.dataframe(df_display, use_container_width=True, height=360, hide_index=True)
     else:
         st.info("暂无原料数据。请先上传 Excel 导入。")
@@ -1191,6 +1191,7 @@ with tab5:
                 if new_category == "新增类别...":
                     new_category = st.text_input("输入新类别")
                 new_unit = st.text_input("单位 *", placeholder="必填，如 克/个/盒")
+                new_unit_amount = st.number_input("单位量 *", min_value=0.0, format="%.4f", value=0.0)
             with col_b:
                 new_base_price = st.number_input("加价前单价 *", min_value=0.0, format="%.4f")
                 new_final_price = st.number_input("加价后单价 *", min_value=0.0001, format="%.4f")
@@ -1205,6 +1206,7 @@ with tab5:
                 if not new_category or new_category == "新增类别...": errors.append("类别")
                 if not new_unit: errors.append("单位")
                 if new_final_price <= 0: errors.append("加价后单价")
+                if new_unit_amount <= 0: errors.append("单位量")
                 if errors:
                     st.error(f"请填写以下必填字段: {', '.join(errors)}")
                 else:
@@ -1213,6 +1215,7 @@ with tab5:
                         "name": new_name,
                         "category": new_category if new_category != "新增类别..." else "",
                         "unit": new_unit,
+                        "unit_amount": new_unit_amount,
                         "base_price": new_base_price,
                         "final_price": new_final_price,
                         "item_type": new_item_type,
@@ -1242,6 +1245,8 @@ with tab5:
                     if edit_category == "新增类别...":
                         edit_category = st.text_input("输入新类别")
                     edit_unit = st.text_input("单位 *", value=edit_material.get("unit", ""))
+                    edit_unit_amount = st.number_input("单位量 *", min_value=0.0, format="%.4f",
+                        value=float(edit_material.get("unit_amount") or 0))
                 with col_b:
                     edit_base_price = st.number_input("加价前单价 *", min_value=0.0, format="%.4f",
                         value=float(edit_material.get("base_price") or 0))
@@ -1260,6 +1265,7 @@ with tab5:
                     if not edit_category or edit_category == "新增类别...": errors.append("类别")
                     if not edit_unit: errors.append("单位")
                     if edit_final_price <= 0: errors.append("加价后单价")
+                    if edit_unit_amount <= 0: errors.append("单位量")
                     if errors:
                         st.error(f"请填写以下必填字段: {', '.join(errors)}")
                     else:
@@ -1267,6 +1273,7 @@ with tab5:
                             "name": edit_name,
                             "category": edit_category if edit_category != "新增类别..." else "",
                             "unit": edit_unit,
+                            "unit_amount": edit_unit_amount,
                             "base_price": edit_base_price,
                             "final_price": edit_final_price,
                             "item_type": edit_item_type,
@@ -1274,6 +1281,24 @@ with tab5:
                             "notes": edit_notes,
                         })
                         st.success(f"已更新: {edit_name}")
+                        st.rerun()
+
+            st.markdown("---")
+            col_del1, col_del2 = st.columns([1, 3])
+            with col_del1:
+                if st.button("🗑️ 删除此原料", type="secondary"):
+                    st.session_state["confirm_delete_material"] = edit_material["id"]
+                    st.rerun()
+            with col_del2:
+                if st.session_state.get("confirm_delete_material") == edit_material["id"]:
+                    st.warning(f"确认删除「{edit_material['name']}」？此操作不可撤销。")
+                    if st.button("确认删除", type="primary"):
+                        client.delete_raw_material(edit_material["id"])
+                        st.session_state.pop("confirm_delete_material", None)
+                        st.success(f"已删除: {edit_material['name']}")
+                        st.rerun()
+                    if st.button("取消"):
+                        st.session_state.pop("confirm_delete_material", None)
                         st.rerun()
 
 # ── Tab6: 配方管理 BOM ──────────────────────────────────────
