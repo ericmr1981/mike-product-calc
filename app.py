@@ -306,7 +306,7 @@ sheet_names = list(wb.sheets.keys())
 
 # ── CLI/UI shared state (disk) ─────────────────────────────────────────
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理", "配方管理"])
 
 with tab1:
     _heading_with_help("Workbook 概览",
@@ -1181,5 +1181,187 @@ with tab5:
                         "notes": new_notes,
                     })
                     st.success(f"已新增: {new_name}")
+                    st.rerun()
+
+# ── Tab6: 配方管理 BOM ──────────────────────────────────────
+
+with tab6:
+    _heading_with_help("配方管理 (BOM)",
+        "📌 **功能说明**：管理产品的配方明细。支持引用采购原料和半成品作为配料。\n"
+        "**使用方式**：选择产品 → 编辑配方明细 → 保存。")
+
+    from mike_product_calc.calc.recipe_mgmt import get_product_with_recipes, build_ingredient_pool
+
+    client = st.session_state.supabase
+
+    # ── Left column: product list ──
+    col_left, col_right = st.columns([1, 2])
+
+    with col_left:
+        st.subheader("产品列表")
+        products = client.list_products()
+        if not products:
+            st.info("暂无产品，请先从 Excel 同步。")
+            st.stop()
+
+        product_options = {p["name"]: p["id"] for p in products}
+        selected_name = st.selectbox("选择产品", options=list(product_options.keys()), key="tab6_prod")
+        selected_id = product_options[selected_name]
+
+        # Quick actions
+        st.markdown("---")
+        with st.expander("➕ 新建产品", expanded=False):
+            with st.form("new_product_form"):
+                new_p_name = st.text_input("品名 *")
+                new_p_version = st.text_input("版本")
+                new_p_category = st.text_input("品类")
+                new_p_type = st.selectbox("制作类型", options=["门店调配", "工厂调配"])
+                new_p_final = st.checkbox("最终成品", value=True)
+                if st.form_submit_button("保存"):
+                    if new_p_name:
+                        client.create_product({
+                            "name": new_p_name,
+                            "version": new_p_version,
+                            "category": new_p_category,
+                            "production_type": new_p_type,
+                            "is_final_product": new_p_final,
+                        })
+                        st.success(f"已创建: {new_p_name}")
+                        st.rerun()
+                    else:
+                        st.error("品名不能为空")
+
+        # Sync from Excel
+        if st.button("📥 从 Excel 同步产品"):
+            from mike_product_calc.sync.excel_sync import execute_sync_products_recipes
+            with st.spinner("同步中..."):
+                result = execute_sync_products_recipes(wb.sheets, client)
+            st.success(f"同步完成: 新增 {result.inserts} 个产品")
+            st.rerun()
+
+    with col_right:
+        # ── Product detail ──
+        prod_data = client.get_product(selected_id)
+        if not prod_data:
+            st.warning("产品不存在")
+            st.stop()
+
+        st.subheader(f"📋 {prod_data['name']}")
+
+        # Product info form
+        with st.form("edit_product_form"):
+            edit_cols = st.columns(3)
+            with edit_cols[0]:
+                edit_name = st.text_input("品名", value=prod_data.get("name", ""))
+            with edit_cols[1]:
+                edit_version = st.text_input("版本", value=prod_data.get("version", ""))
+            with edit_cols[2]:
+                edit_category = st.text_input("品类", value=prod_data.get("category", ""))
+            with edit_cols[0]:
+                edit_type = st.selectbox("制作类型",
+                    options=["门店调配", "工厂调配"],
+                    index=0 if prod_data.get("production_type") == "门店调配" else 1)
+            with edit_cols[1]:
+                edit_status = st.selectbox("状态",
+                    options=["上线", "下线"],
+                    index=0 if prod_data.get("status") == "上线" else 1)
+            with edit_cols[2]:
+                edit_is_final = st.checkbox("最终成品", value=prod_data.get("is_final_product", False))
+
+            if st.form_submit_button("保存产品信息"):
+                client.update_product(selected_id, {
+                    "name": edit_name,
+                    "version": edit_version,
+                    "category": edit_category,
+                    "production_type": edit_type,
+                    "status": edit_status,
+                    "is_final_product": edit_is_final,
+                })
+                st.success("产品信息已更新")
+                st.rerun()
+
+        st.divider()
+
+        # ── Recipe BOM editor ──
+        st.subheader("配方明细 (BOM)")
+
+        # Load ingredient pool
+        pool = build_ingredient_pool(client)
+
+        # Show existing recipes
+        recipes = client.list_recipes(selected_id)
+        if recipes:
+            recipe_rows = []
+            for r in recipes:
+                ing_name = ""
+                if r["ingredient_source"] == "raw":
+                    ing_name = r.get("raw_material_id", "")
+                elif r["ingredient_source"] == "product":
+                    ing_name = r.get("ref_product_id", "")
+                recipe_rows.append({
+                    "id": r["id"],
+                    "来源": "原料" if r["ingredient_source"] == "raw" else "半成品",
+                    "配料": ing_name,
+                    "用量": r.get("quantity", 0),
+                    "单位成本": r.get("unit_cost", 0),
+                })
+
+            df_recipes = pd.DataFrame(recipe_rows)
+            st.dataframe(df_recipes, use_container_width=True, hide_index=True)
+
+            if st.button("🗑️ 清空配方", key="clear_recipes"):
+                client.set_recipes(selected_id, [])
+                st.rerun()
+        else:
+            st.info("暂无配方明细数据。")
+
+        st.markdown("---")
+
+        # ── Add ingredient form ──
+        with st.expander("➕ 添加配料", expanded=True):
+            with st.form("add_ingredient_form"):
+                src_type = st.radio("配料来源", options=["原料", "半成品"], horizontal=True)
+
+                if src_type == "原料":
+                    raw_options = {f"{m['name']} ({m.get('category','')})": m["id"] for m in pool["raw_materials"]}
+                    selected_raw = st.selectbox("选择原料", options=list(raw_options.keys()), key="add_raw")
+                    selected_raw_id = raw_options[selected_raw]
+                else:
+                    prod_options = {f"{p['name']} v{p.get('version','')}": p["id"] for p in pool["products"] if p["id"] != selected_id}
+                    selected_prod = st.selectbox("选择半成品", options=list(prod_options.keys()), key="add_prod")
+                    selected_prod_id = prod_options[selected_prod]
+
+                qty = st.number_input("用量", min_value=0.0, format="%.2f")
+                unit_cost = st.number_input("单位成本 (可选)", min_value=0.0, format="%.4f")
+                store_unit_cost = st.number_input("门店单位成本 (可选)", min_value=0.0, format="%.4f")
+
+                if st.form_submit_button("添加"):
+                    new_recipe = {
+                        "product_id": selected_id,
+                        "ingredient_source": "raw" if src_type == "原料" else "product",
+                        "quantity": qty,
+                        "unit_cost": unit_cost if unit_cost > 0 else None,
+                        "store_unit_cost": store_unit_cost if store_unit_cost > 0 else None,
+                        "sort_order": len(recipes),
+                    }
+                    if src_type == "原料":
+                        new_recipe["raw_material_id"] = selected_raw_id
+                    else:
+                        new_recipe["ref_product_id"] = selected_prod_id
+
+                    existing_recipes = [{
+                        "product_id": r["product_id"],
+                        "ingredient_source": r["ingredient_source"],
+                        "raw_material_id": r.get("raw_material_id", None),
+                        "ref_product_id": r.get("ref_product_id", None),
+                        "quantity": r["quantity"],
+                        "unit_cost": r.get("unit_cost"),
+                        "store_unit_cost": r.get("store_unit_cost"),
+                        "sort_order": r.get("sort_order", 0),
+                    } for r in recipes]
+
+                    existing_recipes.append(new_recipe)
+                    client.set_recipes(selected_id, existing_recipes)
+                    st.success("配料已添加")
                     st.rerun()
 
