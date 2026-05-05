@@ -1255,6 +1255,12 @@ with tab6:
 
     client = st.session_state.supabase
 
+    def _extract_id(val):
+        """Extract UUID from expanded object or plain string."""
+        if isinstance(val, dict):
+            return val.get("id")
+        return val
+
     # ── Left column: product list ──
     col_left, col_right = st.columns([1, 2])
 
@@ -1375,11 +1381,41 @@ with tab6:
                 })
 
             df_recipes = pd.DataFrame(recipe_rows)
+
+            # ── Export ──
+            col_exp1, col_exp2 = st.columns([1, 4])
+            with col_exp1:
+                csv_data = df_recipes.to_csv(index=False).encode("utf-8")
+                st.download_button("📥 导出 CSV", data=csv_data, file_name=f"配方_{prod_data['name']}.csv", mime="text/csv")
+            with col_exp2:
+                if st.button("🗑️ 清空全部配方", key="clear_recipes"):
+                    client.set_recipes(selected_id, [])
+                    st.rerun()
+
             st.dataframe(df_recipes, use_container_width=True, hide_index=True)
 
-            if st.button("🗑️ 清空配方", key="clear_recipes"):
-                client.set_recipes(selected_id, [])
-                st.rerun()
+            # ── Delete single ingredient ──
+            with st.expander("🗑️ 删除单条配料", expanded=False):
+                ing_options = {f"{r['配料']} (用量: {r['用量']})": i for i, r in enumerate(recipe_rows)}
+                del_choice = st.selectbox("选择要删除的配料", options=list(ing_options.keys()), key="del_ing")
+                if st.button("确认删除", type="secondary"):
+                    del_idx = ing_options[del_choice]
+                    remaining = [r for i, r in enumerate(recipes) if i != del_idx]
+                    normalized = []
+                    for i, r in enumerate(remaining):
+                        normalized.append({
+                            "product_id": r["product_id"],
+                            "ingredient_source": r["ingredient_source"],
+                            "raw_material_id": _extract_id(r.get("raw_material_id")),
+                            "ref_product_id": _extract_id(r.get("ref_product_id")),
+                            "quantity": r["quantity"],
+                            "unit_cost": None,
+                            "store_unit_cost": None,
+                            "sort_order": i,
+                        })
+                    client.set_recipes(selected_id, normalized)
+                    st.success("配料已删除")
+                    st.rerun()
         else:
             st.info("暂无配方明细数据。")
 
@@ -1414,12 +1450,6 @@ with tab6:
                         new_recipe["raw_material_id"] = selected_raw_id
                     else:
                         new_recipe["ref_product_id"] = selected_prod_id
-
-                    def _extract_id(val):
-                        """Extract UUID from expanded object or plain string."""
-                        if isinstance(val, dict):
-                            return val.get("id")
-                        return val
 
                     existing_recipes = [{
                         "product_id": r["product_id"],
