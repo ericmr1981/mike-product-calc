@@ -46,6 +46,15 @@ def _find_sheet(sheets: dict[str, pd.DataFrame], *names: str) -> Optional[str]:
     return None
 
 
+def _map_status(excel_status: str) -> str:
+    """Map Excel status values to Supabase status values."""
+    mapping = {
+        "已生效": "上线",
+        "已失效": "下线",
+    }
+    return mapping.get(excel_status, excel_status)
+
+
 def _to_num(val) -> Optional[float]:
     if val is None:
         return None
@@ -82,7 +91,7 @@ def _parse_raw_materials(sheets: dict[str, pd.DataFrame]) -> list[dict]:
                 "unit": str(row.get("订货单位", "")).strip(),
                 "base_price": _to_num(row.get("加价前单价")),
                 "final_price": _to_num(row.get("加价后单价")),
-                "status": str(row.get("生效状态", "已生效")).strip(),
+                "status": _map_status(str(row.get("生效状态", "已生效")).strip()),
                 "synced_from_excel": True,
             }
         )

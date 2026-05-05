@@ -13,7 +13,7 @@ def get_categories(client: MpcSupabaseClient) -> list[str]:
 def get_material_stats(client: MpcSupabaseClient) -> dict[str, Any]:
     materials = client.list_raw_materials()
     total = len(materials)
-    active = sum(1 for m in materials if m.get("status") == "已生效")
+    active = sum(1 for m in materials if m.get("status") in ("上线", "已生效"))
     inactive = total - active
     by_category: dict[str, int] = {}
     for m in materials:

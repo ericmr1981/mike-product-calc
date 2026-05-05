@@ -23,9 +23,9 @@ def test_get_material_stats():
     """get_material_stats returns counts by status and category."""
     mock_client = MagicMock()
     mock_client.list_raw_materials.return_value = [
-        {"status": "已生效", "category": "调味酱"},
-        {"status": "已生效", "category": "调味酱"},
-        {"status": "已失效", "category": "包材"},
+        {"status": "上线", "category": "调味酱"},
+        {"status": "上线", "category": "调味酱"},
+        {"status": "下线", "category": "包材"},
     ]
     stats = get_material_stats(mock_client)
     assert stats["total"] == 3
@@ -37,8 +37,8 @@ def test_search_materials():
     """search_materials filters by search term and category."""
     mock_client = MagicMock()
     mock_client.list_raw_materials.return_value = [
-        {"name": "橙子酱", "category": "调味酱", "status": "已生效"},
-        {"name": "苹果酱", "category": "调味酱", "status": "已生效"},
+        {"name": "橙子酱", "category": "调味酱", "status": "上线"},
+        {"name": "苹果酱", "category": "调味酱", "status": "上线"},
     ]
     result = search_materials(mock_client, search="橙子", category="调味酱")
     assert len(result) == 1

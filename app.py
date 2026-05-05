@@ -1078,7 +1078,7 @@ with tab4:
 with tab5:
     _heading_with_help("原料管理",
         "📌 **功能说明**：管理所有采购原料的信息。支持 CRUD 操作，并可从 Excel 同步。\n"
-        "**字段说明**：编码=品项编码；名称=品项名称；类别=调味酱/包材/乳制品等；"
+        "**字段说明**：编码=品项编码（自动生成）；名称=品项名称；类别=调味酱/包材/乳制品等；"
         "单价=加价后有效采购价。")
 
     from mike_product_calc.calc.material_mgmt import get_categories, get_material_stats, search_materials
@@ -1101,21 +1101,40 @@ with tab5:
     stats = get_material_stats(client)
     col_s1, col_s2, col_s3, col_s4 = st.columns(4)
     col_s1.metric("原料总数", stats["total"])
-    col_s2.metric("已生效", stats["active"])
-    col_s3.metric("已失效", stats["inactive"])
+    col_s2.metric("已上线", stats["active"])
+    col_s3.metric("已下线", stats["inactive"])
     col_s4.metric("类别数", len(stats["by_category"]))
 
-    # ── Sync from Excel ──
-    with st.expander("📥 从 Excel 同步", expanded=False):
-        st.caption("将 Excel 中总原料成本表的数据同步到 Supabase。")
+    # ── 独立上传接口 ──
+    with st.expander("📤 上传原料表（Excel）", expanded=False):
+        st.caption("上传包含总原料成本表的 Excel 文件。上传后预览差异再确认同步。")
+        uploaded_raw = st.file_uploader("选择 Excel 文件", type=["xlsx"], key="raw_xlsx_upload")
+        if uploaded_raw is not None:
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+                tmp.write(uploaded_raw.getvalue())
+                tmp_path = tmp.name
+            from mike_product_calc.data.loader import load_workbook
+            raw_wb = load_workbook(Path(tmp_path))
+            diffs = preview_sync_raw_materials(raw_wb.sheets, client)
+            df_diff = pd.DataFrame(diffs)
+            st.dataframe(df_diff, use_container_width=True, hide_index=True)
+            if st.button("确认执行同步"):
+                result = execute_sync_raw_materials(raw_wb.sheets, client)
+                st.success(f"同步完成: 新增 {result.inserts}, 更新 {result.updates}")
+                st.rerun()
+
+    # ── Sync from current workbook ──
+    with st.expander("📥 从当前工作簿同步", expanded=False):
+        st.caption("将当前已加载 Excel 中总原料成本表的数据同步到 Supabase。")
         if st.button("预览差异"):
             diffs = preview_sync_raw_materials(wb.sheets, client)
             df_diff = pd.DataFrame(diffs)
             st.dataframe(df_diff, use_container_width=True, hide_index=True)
-            if st.button("确认执行同步"):
-                result = execute_sync_raw_materials(wb.sheets, client)
-                st.success(f"同步完成: 新增 {result.inserts}, 更新 {result.updates}")
-                st.rerun()
+        if st.button("确认执行同步"):
+            result = execute_sync_raw_materials(wb.sheets, client)
+            st.success(f"同步完成: 新增 {result.inserts}, 更新 {result.updates}")
+            st.rerun()
 
     # ── Filters ──
     categories = ["全部"] + get_categories(client)
@@ -1123,54 +1142,74 @@ with tab5:
     with col_f1:
         filter_cat = st.selectbox("类别过滤", options=categories, key="tab5_cat")
     with col_f2:
-        filter_status = st.selectbox("状态", options=["全部", "已生效", "已失效"], key="tab5_status")
+        filter_status = st.selectbox("状态", options=["全部", "上线", "下线"], key="tab5_status")
 
     search_term = st.text_input("搜索", placeholder="输入原料名称...", key="tab5_search")
 
     # ── Material list ──
-    materials = client.list_raw_materials(
+    all_materials = client.list_raw_materials(
         category=filter_cat if filter_cat != "全部" else None,
         search=search_term if search_term else None,
     )
     if filter_status != "全部":
-        materials = [m for m in materials if m.get("status") == filter_status]
+        all_materials = [m for m in all_materials if m.get("status") == filter_status]
 
-    df_materials = pd.DataFrame(materials)
+    df_materials = pd.DataFrame(all_materials)
     if not df_materials.empty:
         display_cols = ["code", "name", "category", "final_price", "unit", "status"]
         available = [c for c in display_cols if c in df_materials.columns]
         df_display = df_materials[available].copy()
         df_display.columns = ["编码", "名称", "类别", "单价", "单位", "状态"]
-        st.dataframe(df_display, use_container_width=True, height=400, hide_index=True)
+        st.dataframe(df_display, use_container_width=True, height=360, hide_index=True)
     else:
-        st.info("暂无原料数据。请先通过 Excel 同步导入。")
+        st.info("暂无原料数据。请先上传 Excel 导入。")
 
-    # ── CRUD: Add new ──
-    with st.expander("➕ 新增原料", expanded=False):
-        with st.form("new_material_form"):
-            cols = st.columns(3)
-            with cols[0]:
-                new_code = st.text_input("编码")
-                new_name = st.text_input("名称 *")
-                new_category = st.selectbox("类别", options=get_categories(client) + ["新增类别..."])
+    st.divider()
+
+    # ── Helper: next code ──
+    def _next_material_code(client) -> str:
+        existing = client.list_raw_materials()
+        max_num = 0
+        for m in existing:
+            c = (m.get("code") or "").strip()
+            if c.startswith("RM") and c[2:].isdigit():
+                max_num = max(max_num, int(c[2:]))
+        return f"RM{max_num + 1:04d}"
+
+    # ── Tab: 新增 vs 修改 ──
+    tab5_action = st.radio("操作", options=["➕ 新增原料", "✏️ 修改原料"], horizontal=True, label_visibility="collapsed")
+
+    if tab5_action == "➕ 新增原料":
+        with st.form("new_material_form", clear_on_submit=True):
+            auto_code = _next_material_code(client)
+            st.text_input("编码（自动生成）", value=auto_code, disabled=True, key="new_code_display")
+            st.markdown("**必填字段**")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                new_name = st.text_input("名称 *", placeholder="必填")
+                new_category = st.selectbox("类别 *", options=get_categories(client) + ["新增类别..."])
                 if new_category == "新增类别...":
                     new_category = st.text_input("输入新类别")
-            with cols[1]:
-                new_unit = st.text_input("单位")
-                new_base_price = st.number_input("加价前单价", min_value=0.0, format="%.4f")
-                new_final_price = st.number_input("加价后单价 *", min_value=0.0, format="%.4f")
-            with cols[2]:
-                new_item_type = st.selectbox("品项类型", options=["普通", "特殊"])
-                new_status = st.selectbox("状态", options=["已生效", "已失效"])
-                new_notes = st.text_area("备注")
+                new_unit = st.text_input("单位 *", placeholder="必填，如 克/个/盒")
+            with col_b:
+                new_base_price = st.number_input("加价前单价 *", min_value=0.0, format="%.4f")
+                new_final_price = st.number_input("加价后单价 *", min_value=0.0001, format="%.4f")
+                new_item_type = st.selectbox("品项类型 *", options=["普通", "特殊"])
+                new_status = st.selectbox("状态 *", options=["上线", "下线"])
+            new_notes = st.text_area("备注（可选）")
 
-            submitted = st.form_submit_button("保存")
+            submitted = st.form_submit_button("保存", type="primary")
             if submitted:
-                if not new_name:
-                    st.error("名称不能为空")
+                errors = []
+                if not new_name: errors.append("名称")
+                if not new_category or new_category == "新增类别...": errors.append("类别")
+                if not new_unit: errors.append("单位")
+                if new_final_price <= 0: errors.append("加价后单价")
+                if errors:
+                    st.error(f"请填写以下必填字段: {', '.join(errors)}")
                 else:
                     client.create_raw_material({
-                        "code": new_code,
+                        "code": auto_code,
                         "name": new_name,
                         "category": new_category if new_category != "新增类别..." else "",
                         "unit": new_unit,
@@ -1180,8 +1219,62 @@ with tab5:
                         "status": new_status,
                         "notes": new_notes,
                     })
-                    st.success(f"已新增: {new_name}")
+                    st.success(f"已新增: {new_name} ({auto_code})")
                     st.rerun()
+
+    else:
+        # ── Edit existing material ──
+        all_names = {m["name"]: m for m in client.list_raw_materials()}
+        if not all_names:
+            st.info("暂无原料可修改。")
+        else:
+            selected_edit_name = st.selectbox("选择要修改的原料", options=list(all_names.keys()), key="tab5_edit_select")
+            edit_material = all_names[selected_edit_name]
+
+            with st.form("edit_material_form"):
+                st.text_input("编码", value=edit_material.get("code", ""), disabled=True)
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    edit_name = st.text_input("名称 *", value=edit_material.get("name", ""))
+                    edit_category = st.selectbox("类别 *",
+                        options=get_categories(client) + ["新增类别..."],
+                        index=0 if edit_material.get("category") not in get_categories(client) else get_categories(client).index(edit_material["category"]))
+                    if edit_category == "新增类别...":
+                        edit_category = st.text_input("输入新类别")
+                    edit_unit = st.text_input("单位 *", value=edit_material.get("unit", ""))
+                with col_b:
+                    edit_base_price = st.number_input("加价前单价 *", min_value=0.0, format="%.4f",
+                        value=float(edit_material.get("base_price") or 0))
+                    edit_final_price = st.number_input("加价后单价 *", min_value=0.0001, format="%.4f",
+                        value=float(edit_material.get("final_price") or 0))
+                    edit_item_type = st.selectbox("品项类型 *", options=["普通", "特殊"],
+                        index=0 if edit_material.get("item_type") != "特殊" else 1)
+                    edit_status = st.selectbox("状态 *", options=["上线", "下线"],
+                        index=0 if edit_material.get("status") != "下线" else 1)
+                edit_notes = st.text_area("备注（可选）", value=edit_material.get("notes") or "")
+
+                submitted = st.form_submit_button("保存修改", type="primary")
+                if submitted:
+                    errors = []
+                    if not edit_name: errors.append("名称")
+                    if not edit_category or edit_category == "新增类别...": errors.append("类别")
+                    if not edit_unit: errors.append("单位")
+                    if edit_final_price <= 0: errors.append("加价后单价")
+                    if errors:
+                        st.error(f"请填写以下必填字段: {', '.join(errors)}")
+                    else:
+                        client.update_raw_material(edit_material["id"], {
+                            "name": edit_name,
+                            "category": edit_category if edit_category != "新增类别..." else "",
+                            "unit": edit_unit,
+                            "base_price": edit_base_price,
+                            "final_price": edit_final_price,
+                            "item_type": edit_item_type,
+                            "status": edit_status,
+                            "notes": edit_notes,
+                        })
+                        st.success(f"已更新: {edit_name}")
+                        st.rerun()
 
 # ── Tab6: 配方管理 BOM ──────────────────────────────────────
 
