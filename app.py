@@ -1505,12 +1505,25 @@ with tab7:
         raw_materials = client.list_raw_materials()
         all_mat_options = {f"{m['name']} ({m.get('category','')})": m["id"] for m in raw_materials}
         pkg_options = {rm["name"]: rm["id"] for rm in raw_materials if rm.get("category") in ("包材", None)}
+        all_products = client.list_products()
+        main_prod_options = {f"{p['name']} v{p.get('version','')}".rstrip("v "): p["id"] for p in all_products}
 
         # ── Existing specs ──
         specs = client.list_serving_specs(sel_prod_id)
 
         if specs:
             for i, s in enumerate(specs):
+                # Extract main material name
+                main_mat_name = ""
+                mm = s.get("main_material_id")
+                if isinstance(mm, dict):
+                    main_mat_name = mm.get("name", "")
+                    ver = mm.get("version", "")
+                    if ver:
+                        main_mat_name += f" v{ver}"
+                elif isinstance(mm, str):
+                    main_mat_name = str(mm)
+
                 # Extract topping names
                 topping_names = []
                 for t in s.get("serving_spec_toppings", []):
@@ -1532,7 +1545,8 @@ with tab7:
                     col_s1, col_s2 = st.columns([3, 1])
                     with col_s1:
                         st.markdown(f"**{s['spec_name']}**")
-                        st.caption(f"主原料用量: {s.get('quantity', '')} 克" if s.get('quantity') else "")
+                        if main_mat_name:
+                            st.caption(f"主原料: {main_mat_name} × {s.get('quantity', '')} 克")
                         if pkg_name:
                             st.caption(f"包材: {pkg_name}")
                         if topping_names:
@@ -1540,11 +1554,11 @@ with tab7:
                     with col_s2:
                         if st.button("🗑️ 删除", key=f"del_spec_{s['id']}"):
                             remaining = [sp for sp in specs if sp["id"] != s["id"]]
-                            # Normalize for re-insertion
                             normalized = [{
                                 "product_id": sp["product_id"],
                                 "spec_name": sp["spec_name"],
                                 "quantity": sp.get("quantity"),
+                                "main_material_id": _extract_id(sp.get("main_material_id")),
                                 "packaging_id": _extract_id(sp.get("packaging_id")),
                                 "packaging_qty": sp.get("packaging_qty", 1),
                             } for sp in remaining]
@@ -1569,6 +1583,10 @@ with tab7:
 
             col_q1, col_q2 = st.columns(2)
             with col_q1:
+                new_main_prod = st.selectbox(
+                    "主原料 *", options=list(main_prod_options.keys()),
+                    index=list(main_prod_options.keys()).index(sel_prod_name) if sel_prod_name in main_prod_options else 0,
+                    key="new_main_prod")
                 new_main_qty = st.number_input("主原料用量 (克)", min_value=0.0, format="%.1f", value=120.0)
             with col_q2:
                 new_pkg_select = st.selectbox("包材", options=["(无)"] + list(pkg_options.keys()), key="new_pkg")
@@ -1578,6 +1596,7 @@ with tab7:
 
             if st.form_submit_button("保存规格", type="primary"):
                 new_pkg_id = pkg_options.get(new_pkg_select, "") if new_pkg_select != "(无)" else None
+                new_main_id = main_prod_options.get(new_main_prod)
 
                 # Preserve existing specs + add new one
                 existing_payload = []
@@ -1586,6 +1605,7 @@ with tab7:
                         "product_id": sp["product_id"],
                         "spec_name": sp["spec_name"],
                         "quantity": sp.get("quantity"),
+                        "main_material_id": _extract_id(sp.get("main_material_id")),
                         "packaging_id": _extract_id(sp.get("packaging_id")),
                         "packaging_qty": sp.get("packaging_qty", 1),
                     })
@@ -1594,6 +1614,7 @@ with tab7:
                     "product_id": sel_prod_id,
                     "spec_name": new_spec_name,
                     "quantity": new_main_qty,
+                    "main_material_id": new_main_id,
                     "packaging_id": new_pkg_id,
                     "packaging_qty": new_pkg_qty,
                 })
