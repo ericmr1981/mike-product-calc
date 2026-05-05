@@ -194,7 +194,12 @@ class MpcSupabaseClient:
         return resp.json()
 
     def set_serving_specs(self, product_id: str, specs_data: list[dict]) -> list[dict]:
-        """Replace all serving specs for a product: delete old + toppings, insert new."""
+        """Replace all serving specs for a product: delete old + toppings, insert new.
+
+        Each spec dict may include a key ``_toppings`` (list of dicts with
+        ``material_id`` and ``quantity``) which will be created as
+        ``serving_spec_toppings`` for that spec.
+        """
         # 1. GET existing specs
         existing = self.list_serving_specs(product_id)
 
@@ -212,12 +217,34 @@ class MpcSupabaseClient:
             headers=self._headers(),
         )
 
-        # 4. POST new specs
+        # 4. POST new specs (strip internal keys like _toppings)
+        clean_specs = [
+            {k: v for k, v in s.items() if not k.startswith("_")}
+            for s in specs_data
+        ]
         resp = requests.post(
-            f"{self._base}/serving_specs", headers=self._headers(), json=specs_data
+            f"{self._base}/serving_specs", headers=self._headers(), json=clean_specs
         )
         resp.raise_for_status()
-        return resp.json()
+        new_specs = resp.json()
+
+        # 5. Create toppings for each new spec
+        for i, spec in enumerate(new_specs):
+            toppings = specs_data[i].get("_toppings", [])
+            if toppings:
+                for t in toppings:
+                    t["serving_spec_id"] = spec["id"]
+                    try:
+                        resp = requests.post(
+                            f"{self._base}/serving_spec_toppings",
+                            headers=self._headers(),
+                            json=[t],
+                        )
+                        resp.raise_for_status()
+                    except Exception as e:
+                        print(f"[set_serving_specs] Failed to create topping: {e}")
+                        raise
+        return new_specs
 
     # ------------------------------------------------------------------
     # Sync Log

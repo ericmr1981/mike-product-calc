@@ -974,6 +974,7 @@ with tab5:
             if st.button("确认执行同步", key="sync_upload"):
                 result = execute_sync_raw_materials(raw_wb.sheets, client)
                 st.success(f"同步完成: 新增 {result.inserts}, 更新 {result.updates}")
+                st.cache_data.clear()
                 st.rerun()
 
     # ── Filters (from cache) ──
@@ -1064,6 +1065,7 @@ with tab5:
                         "notes": new_notes,
                     })
                     st.success(f"已新增: {new_name} ({auto_code})")
+                    st.cache_data.clear()
                     st.rerun()
 
     else:
@@ -1122,6 +1124,7 @@ with tab5:
                             "notes": edit_notes,
                         })
                         st.success(f"已更新: {edit_name}")
+                        st.cache_data.clear()
                         st.rerun()
 
             st.markdown("---")
@@ -1137,6 +1140,7 @@ with tab5:
                         client.delete_raw_material(edit_material["id"])
                         st.session_state.pop("confirm_delete_material", None)
                         st.success(f"已删除: {edit_material['name']}")
+                        st.cache_data.clear()
                         st.rerun()
                     if st.button("取消"):
                         st.session_state.pop("confirm_delete_material", None)
@@ -1201,6 +1205,7 @@ with tab6:
                             "is_final_product": new_p_final,
                         })
                         st.success(f"已创建: {new_p_name}")
+                        st.cache_data.clear()
                         st.rerun()
                     else:
                         st.error("品名不能为空")
@@ -1248,6 +1253,7 @@ with tab6:
                     "is_final_product": edit_is_final,
                 })
                 st.success("产品信息已更新")
+                st.cache_data.clear()
                 st.rerun()
 
         st.divider()
@@ -1294,6 +1300,7 @@ with tab6:
             with col_exp2:
                 if st.button("🗑️ 清空全部配方", key="clear_recipes"):
                     client.set_recipes(selected_id, [])
+                    st.cache_data.clear()
                     st.rerun()
 
             st.dataframe(df_recipes, use_container_width=True, hide_index=True)
@@ -1319,6 +1326,7 @@ with tab6:
                         })
                     client.set_recipes(selected_id, normalized)
                     st.success("配料已删除")
+                    st.cache_data.clear()
                     st.rerun()
         else:
             st.info("暂无配方明细数据。")
@@ -1369,6 +1377,7 @@ with tab6:
                     existing_recipes.append(new_recipe)
                     client.set_recipes(selected_id, existing_recipes)
                     st.success("配料已添加")
+                    st.cache_data.clear()
                     st.rerun()
 
 # ── Tab7: 出品规格管理 ──────────────────────────────────────
@@ -1397,10 +1406,6 @@ with tab7:
         sel_prod_name = st.selectbox("选择产品", options=list(prod_options.keys()), key="tab7_prod")
         sel_prod_id = prod_options[sel_prod_name]
 
-        st.markdown("---")
-        if st.button("🔄 刷新规格"):
-            st.rerun()
-
     with col_right7:
         # ── Product info ──
         prod_data = _t7_prod_by_id.get(sel_prod_id, st.session_state.cached_products[0] if st.session_state.cached_products else {})
@@ -1413,8 +1418,23 @@ with tab7:
         _t7_all_prods = st.session_state.cached_products
         main_prod_options = {f"{p['name']} v{p.get('version','')}".rstrip("v "): p["id"] for p in _t7_all_prods}
 
+        # Shared options for both edit and add forms
+        _ingredient_cats = {"调味酱", "配料", "乳制品", "风味奶浆", "辅料", "成品", "水果"}
+        _ing_mat_options = {
+            f"{m['name']} ({m.get('category','')})": m["id"]
+            for m in _t7_rm if m.get("category") in _ingredient_cats
+        }
+        _mat_unit = {m["name"]: m.get("unit", "") for m in _t7_rm}
+
         # ── Existing specs (from cache) ──
         specs = [s for s in st.session_state.cached_all_specs if s.get("product_id") == sel_prod_id]
+
+        def _refresh_specs_cache():
+            """Re-fetch all serving specs from Supabase into session state."""
+            try:
+                st.session_state.cached_all_specs = st.session_state.supabase.list_all_serving_specs()
+            except Exception:
+                pass
 
         if specs:
             for i, s in enumerate(specs):
@@ -1429,102 +1449,332 @@ with tab7:
                 elif isinstance(mm, str):
                     main_mat_name = str(mm)
 
-                # Extract topping names
-                topping_names = []
+                # Extract topping names (separate packaging toppings from regular)
+                pkg_topping_names = []
+                reg_topping_names = []
                 for t in s.get("serving_spec_toppings", []):
                     mat = t.get("material_id")
                     if isinstance(mat, dict):
-                        topping_names.append(f"{mat.get('name','')}×{t.get('quantity',1)}")
+                        _cat = mat.get("category", "")
+                        _label = f"{mat.get('name','')}×{t.get('quantity',1)}"
+                        if _cat == "包材":
+                            pkg_topping_names.append(_label)
+                        else:
+                            reg_topping_names.append(_label)
                     elif isinstance(mat, str):
-                        topping_names.append(f"{mat}×{t.get('quantity',1)}")
+                        reg_topping_names.append(f"{mat}×{t.get('quantity',1)}")
 
-                # Extract packaging name
-                pkg_name = ""
+                # Extract packaging names (from packaging_id + packaging toppings)
+                pkg_names = []
                 pkg = s.get("packaging_id")
                 if isinstance(pkg, dict):
-                    pkg_name = pkg.get("name", "")
-                elif isinstance(pkg, str):
-                    pkg_name = str(pkg)
+                    pkg_names.append(pkg.get("name", ""))
+                elif isinstance(pkg, str) and pkg:
+                    pkg_names.append(pkg)
+                pkg_names.extend(pkg_topping_names)
 
                 with st.container(border=True):
                     col_s1, col_s2 = st.columns([3, 1])
                     with col_s1:
-                        st.markdown(f"**{s['spec_name']}**")
+                        _price = s.get("product_price")
+                        if _price is not None:
+                            try:
+                                _price_display = " — ¥" + "{:.2f}".format(float(_price))
+                            except (TypeError, ValueError):
+                                _price_display = ""
+                        else:
+                            _price_display = ""
+                        st.markdown("**" + s["spec_name"] + "**" + _price_display)
                         if main_mat_name:
                             st.caption(f"主原料: {main_mat_name} × {s.get('quantity', '')} 克")
-                        if pkg_name:
-                            st.caption(f"包材: {pkg_name}")
-                        if topping_names:
-                            st.caption(f"附加配料: {', '.join(topping_names)}")
+                        if pkg_names:
+                            st.caption(f"包材: {', '.join(pkg_names)}")
+                        if reg_topping_names:
+                            st.caption(f"附加配料: {', '.join(reg_topping_names)}")
                     with col_s2:
-                        if st.button("🗑️ 删除", key=f"del_spec_{s['id']}"):
+                        if st.button("✏️ 编辑", key=f"edit_{s['id']}", use_container_width=True):
+                            st.session_state["_editing_spec"] = s["id"]
+                            st.rerun()
+                        if st.button("🗑️ 删除", key=f"del_{s['id']}", use_container_width=True):
                             remaining = [sp for sp in specs if sp["id"] != s["id"]]
-                            normalized = [{
-                                "product_id": sp["product_id"],
-                                "spec_name": sp["spec_name"],
-                                "quantity": sp.get("quantity"),
-                                "main_material_id": _extract_id(sp.get("main_material_id")),
-                                "packaging_id": _extract_id(sp.get("packaging_id")),
-                                "packaging_qty": sp.get("packaging_qty", 1),
-                            } for sp in remaining]
+                            normalized = []
+                            for sp in remaining:
+                                spec_item = {
+                                    "product_id": sp["product_id"],
+                                    "spec_name": sp["spec_name"],
+                                    "quantity": sp.get("quantity"),
+                                    "main_material_id": _extract_id(sp.get("main_material_id")),
+                                    "packaging_id": _extract_id(sp.get("packaging_id")),
+                                    "packaging_qty": sp.get("packaging_qty", 1),
+                                    "product_price": sp.get("product_price"),
+                                }
+                                _existing_toppings = []
+                                for t in sp.get("serving_spec_toppings", []):
+                                    mat_id = _extract_id(t.get("material_id"))
+                                    if mat_id:
+                                        _existing_toppings.append({
+                                            "material_id": mat_id,
+                                            "quantity": t.get("quantity", 1),
+                                        })
+                                if _existing_toppings:
+                                    spec_item["_toppings"] = _existing_toppings
+                                normalized.append(spec_item)
                             client.set_serving_specs(sel_prod_id, normalized)
+                            _refresh_specs_cache()
+                            st.cache_data.clear()
                             st.rerun()
 
-            if st.button("🗑️ 清空全部规格"):
-                client.set_serving_specs(sel_prod_id, [])
-                st.rerun()
+                    # ── Edit form (inline, below spec details) ──
+                    if st.session_state.get("_editing_spec") == s["id"]:
+                        st.markdown("---")
+                        # Pre-fill: current packaging names (from packaging_id + 包材 toppings)
+                        _edit_pkg_names = []
+                        _pkg = s.get("packaging_id")
+                        if isinstance(_pkg, dict) and _pkg.get("name"):
+                            _edit_pkg_names.append(_pkg["name"])
+                        for _t in s.get("serving_spec_toppings", []):
+                            _m = _t.get("material_id")
+                            if isinstance(_m, dict) and _m.get("category") == "包材" and _m.get("name"):
+                                _edit_pkg_names.append(_m["name"])
+                        # Pre-fill: current toppings (non-包材 items)
+                        _edit_topping_rows = []
+                        for _t in s.get("serving_spec_toppings", []):
+                            _m = _t.get("material_id")
+                            if isinstance(_m, dict) and _m.get("category") != "包材":
+                                _tk = f"{_m['name']} ({_m.get('category','')})"
+                                if _tk in _ing_mat_options:
+                                    _edit_topping_rows.append({"配料": _tk, "用量 (克/个/毫升)": _t.get("quantity", 1)})
+
+                        with st.form(key=f"edit_form_{s['id']}"):
+                            _edit_spec_name = st.text_input("规格名", value=s["spec_name"])
+                            _col1, _col2 = st.columns(2)
+                            with _col1:
+                                # Pre-select main material
+                                _mm = s.get("main_material_id")
+                                _mm_key = ""
+                                if isinstance(_mm, dict):
+                                    _v = _mm.get("version", "")
+                                    _mm_key = f"{_mm['name']} v{_v}" if _v else _mm["name"]
+                                _mm_idx = list(main_prod_options.keys()).index(_mm_key) if _mm_key in main_prod_options else 0
+                                _edit_main_prod = st.selectbox(
+                                    "主原料 *", options=list(main_prod_options.keys()),
+                                    index=_mm_idx, key=f"edit_main_{s['id']}",
+                                )
+                                _edit_main_qty = st.number_input(
+                                    "主原料用量 (克)", min_value=0.0, format="%.1f",
+                                    value=float(s.get("quantity", 0) or 0), key=f"edit_qty_{s['id']}",
+                                )
+                            with _col2:
+                                _edit_pkgs = st.multiselect(
+                                    "包材", options=list(pkg_options.keys()),
+                                    default=_edit_pkg_names, key=f"edit_pkg_{s['id']}",
+                                )
+                                _edit_price = st.number_input(
+                                    "定价 (元)", min_value=0.0, format="%.2f",
+                                    value=float(s.get("product_price", 0) or 0), key=f"edit_price_{s['id']}",
+                                )
+
+                            st.markdown("**附加配料**")
+                            _edit_topping_df = pd.DataFrame(
+                                _edit_topping_rows or [{"配料": "", "用量 (克/个/毫升)": 0.0}]
+                            )
+                            _edit_topping_edited = st.data_editor(
+                                _edit_topping_df, num_rows="dynamic",
+                                use_container_width=True, hide_index=True,
+                                column_config={
+                                    "配料": st.column_config.SelectboxColumn(
+                                        "配料", options=list(_ing_mat_options.keys()), required=True,
+                                    ),
+                                    "用量 (克/个/毫升)": st.column_config.NumberColumn("用量", min_value=0.0, format="%.1f"),
+                                },
+                                key=f"edit_tops_{s['id']}",
+                            )
+
+                            _submitted = st.form_submit_button("保存修改", type="primary")
+                            if _submitted:
+                                # ── Collect packaging ──
+                                _edit_pkg_items = []
+                                for _pn in _edit_pkgs:
+                                    _edit_pkg_items.append({
+                                        "material_id": pkg_options[_pn], "quantity": 1,
+                                    })
+                                _edit_pkg_id = _edit_pkg_items[0]["material_id"] if _edit_pkg_items else None
+                                _edit_pkg_toppings = _edit_pkg_items[1:] if len(_edit_pkg_items) > 1 else []
+
+                                # ── Collect toppings ──
+                                _edit_topping_data = []
+                                for _, _r in _edit_topping_edited.iterrows():
+                                    _mn = str(_r.get("配料", "")).strip()
+                                    _q = float(_r.get("用量 (克/个/毫升)", 0) or 0)
+                                    if _mn and _mn in _ing_mat_options and _q > 0:
+                                        _edit_topping_data.append({
+                                            "material_id": _ing_mat_options[_mn], "quantity": _q,
+                                        })
+
+                                # ── Build full payload (all specs + edited one) ──
+                                _edit_payload = []
+                                for _sp in specs:
+                                    if _sp["id"] == s["id"]:
+                                        # Replaced with edited version
+                                        _spec_item = {
+                                            "product_id": sel_prod_id,
+                                            "spec_name": _edit_spec_name,
+                                            "quantity": _edit_main_qty,
+                                            "main_material_id": main_prod_options[_edit_main_prod],
+                                            "packaging_id": _edit_pkg_id,
+                                            "packaging_qty": 1,
+                                            "product_price": _edit_price,
+                                        }
+                                        _all_tops = _edit_pkg_toppings + _edit_topping_data
+                                        if _all_tops:
+                                            _spec_item["_toppings"] = _all_tops
+                                        _edit_payload.append(_spec_item)
+                                    else:
+                                        _spec_item = {
+                                            "product_id": _sp["product_id"],
+                                            "spec_name": _sp["spec_name"],
+                                            "quantity": _sp.get("quantity"),
+                                            "main_material_id": _extract_id(_sp.get("main_material_id")),
+                                            "packaging_id": _extract_id(_sp.get("packaging_id")),
+                                            "packaging_qty": _sp.get("packaging_qty", 1),
+                                            "product_price": _sp.get("product_price"),
+                                        }
+                                        _existing_tops = []
+                                        for _t in _sp.get("serving_spec_toppings", []):
+                                            _mid = _extract_id(_t.get("material_id"))
+                                            if _mid:
+                                                _existing_tops.append({
+                                                    "material_id": _mid, "quantity": _t.get("quantity", 1),
+                                                })
+                                        if _existing_tops:
+                                            _spec_item["_toppings"] = _existing_tops
+                                        _edit_payload.append(_spec_item)
+
+                                client.set_serving_specs(sel_prod_id, _edit_payload)
+                                st.session_state.pop("_editing_spec", None)
+                                _refresh_specs_cache()
+                                st.cache_data.clear()
+                                st.rerun()
         else:
             st.info("暂无出品规格。使用下方表单添加。")
 
         st.divider()
 
-        # ── Add new spec ──
-        st.subheader("➕ 新增出品规格")
-        with st.form("add_spec_form7"):
-            new_spec_name = st.selectbox("规格名", options=["小杯", "标准杯", "华夫蛋筒", "华夫碗", "自定义..."],
-                key="new_spec_name")
-            if new_spec_name == "自定义...":
-                new_spec_name = st.text_input("输入自定义规格名", key="custom_spec_name")
+        # ── Add new spec (collapsed by default) ──
+        with st.expander("➕ 新增出品规格", expanded=False):
+            with st.form("add_spec_form7"):
+                new_spec_name = st.selectbox("规格名", options=["小杯", "标准杯", "华夫蛋筒", "华夫碗", "自定义..."],
+                    key="new_spec_name")
+                if new_spec_name == "自定义...":
+                    new_spec_name = st.text_input("输入自定义规格名", key="custom_spec_name")
 
-            col_q1, col_q2 = st.columns(2)
-            with col_q1:
-                new_main_prod = st.selectbox(
-                    "主原料 *", options=list(main_prod_options.keys()),
-                    index=list(main_prod_options.keys()).index(sel_prod_name) if sel_prod_name in main_prod_options else 0,
-                    key="new_main_prod")
-                new_main_qty = st.number_input("主原料用量 (克)", min_value=0.0, format="%.1f", value=120.0)
-            with col_q2:
-                new_pkg_select = st.selectbox("包材", options=["(无)"] + list(pkg_options.keys()), key="new_pkg")
-                new_pkg_qty = st.number_input("包材用量", min_value=1, value=1, key="new_pkg_qty")
+                col_q1, col_q2 = st.columns(2)
+                with col_q1:
+                    new_main_prod = st.selectbox(
+                        "主原料 *", options=list(main_prod_options.keys()),
+                        index=list(main_prod_options.keys()).index(sel_prod_name) if sel_prod_name in main_prod_options else 0,
+                        key="new_main_prod")
+                    new_main_qty = st.number_input("主原料用量 (克)", min_value=0.0, format="%.1f", value=120.0)
+                with col_q2:
+                    selected_pkgs = st.multiselect(
+                        "包材", options=list(pkg_options.keys()), key="new_pkg"
+                    )
+                    new_price = st.number_input("定价 (元)", min_value=0.0, format="%.2f", value=0.0, key="new_spec_price")
 
-            new_toppings = st.multiselect("附加配料", options=list(all_mat_options.keys()), key="new_toppings")
+                st.markdown("**附加配料**")
+                topping_default = pd.DataFrame([{"配料": "", "用量 (克/个/毫升)": 0.0}])
+                topping_edited = st.data_editor(
+                    topping_default, num_rows="dynamic",
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "配料": st.column_config.SelectboxColumn(
+                            "配料", options=list(_ing_mat_options.keys()), required=True,
+                        ),
+                        "用量 (克/个/毫升)": st.column_config.NumberColumn("用量", min_value=0.0, format="%.1f"),
+                    },
+                    key="topping_editor",
+                )
+                # Show units for selected toppings below the editor
+                if topping_edited is not None and not topping_edited.empty:
+                    _unit_hints = []
+                    for _, _r in topping_edited.iterrows():
+                        _mn = str(_r.get("配料", "")).strip()
+                        if _mn:
+                            _rn = _mn.split(" (")[0].strip()
+                            _u = _mat_unit.get(_rn, "")
+                            _q = _r.get("用量 (克/个/毫升)", 0)
+                            if _q and _u:
+                                _unit_hints.append(f"{_rn}: {_q} {_u}")
+                    if _unit_hints:
+                        st.caption("📏 " + " | ".join(_unit_hints))
 
-            if st.form_submit_button("保存规格", type="primary"):
-                new_pkg_id = pkg_options.get(new_pkg_select, "") if new_pkg_select != "(无)" else None
-                new_main_id = main_prod_options.get(new_main_prod)
+                if st.form_submit_button("保存规格", type="primary"):
+                    # ── Collect packaging data ──
+                    pkg_items = []
+                    for pkg_name in selected_pkgs:
+                        pkg_items.append({
+                            "material_id": pkg_options[pkg_name],
+                            "quantity": 1,
+                        })
+                    new_pkg_id = pkg_items[0]["material_id"] if pkg_items else None
+                    pkg_toppings = pkg_items[1:] if len(pkg_items) > 1 else []
+                    new_main_id = main_prod_options.get(new_main_prod)
 
-                # Preserve existing specs + add new one
-                existing_payload = []
-                for sp in specs:
-                    existing_payload.append({
-                        "product_id": sp["product_id"],
-                        "spec_name": sp["spec_name"],
-                        "quantity": sp.get("quantity"),
-                        "main_material_id": _extract_id(sp.get("main_material_id")),
-                        "packaging_id": _extract_id(sp.get("packaging_id")),
-                        "packaging_qty": sp.get("packaging_qty", 1),
-                    })
+                    # ── Collect topping data from editor ──
+                    topping_data = []
+                    _qty_col = "用量 (克/个/毫升)"
+                    for _, row in topping_edited.iterrows():
+                        mat_name = str(row.get("配料", "")).strip()
+                        qty = float(row.get(_qty_col, 0) or 0)
+                        if mat_name and mat_name in _ing_mat_options and qty > 0:
+                            topping_data.append({
+                                "material_id": _ing_mat_options[mat_name],
+                                "quantity": qty,
+                            })
 
-                existing_payload.append({
-                    "product_id": sel_prod_id,
-                    "spec_name": new_spec_name,
-                    "quantity": new_main_qty,
-                    "main_material_id": new_main_id,
-                    "packaging_id": new_pkg_id,
-                    "packaging_qty": new_pkg_qty,
-                })
+                    # ── Preserve existing specs ──
+                    existing_payload = []
+                    for sp in specs:
+                        spec_item = {
+                            "product_id": sp["product_id"],
+                            "spec_name": sp["spec_name"],
+                            "quantity": sp.get("quantity"),
+                            "main_material_id": _extract_id(sp.get("main_material_id")),
+                            "packaging_id": _extract_id(sp.get("packaging_id")),
+                            "packaging_qty": sp.get("packaging_qty", 1),
+                            "product_price": sp.get("product_price"),
+                        }
+                        # Preserve existing toppings
+                        _existing_toppings = []
+                        for t in sp.get("serving_spec_toppings", []):
+                            mat_id = _extract_id(t.get("material_id"))
+                            if mat_id:
+                                _existing_toppings.append({
+                                    "material_id": mat_id,
+                                    "quantity": t.get("quantity", 1),
+                                })
+                        if _existing_toppings:
+                            spec_item["_toppings"] = _existing_toppings
+                        existing_payload.append(spec_item)
 
-                client.set_serving_specs(sel_prod_id, existing_payload)
-                st.success(f"已新增规格: {new_spec_name}")
-                st.rerun()
+                    # ── New spec ──
+                    all_toppings = pkg_toppings + topping_data
+                    new_spec = {
+                        "product_id": sel_prod_id,
+                        "spec_name": new_spec_name,
+                        "quantity": new_main_qty,
+                        "main_material_id": new_main_id,
+                        "packaging_id": new_pkg_id,
+                        "packaging_qty": 1,
+                        "product_price": new_price,
+                    }
+                    if all_toppings:
+                        new_spec["_toppings"] = all_toppings
+                    existing_payload.append(new_spec)
+
+                    client.set_serving_specs(sel_prod_id, existing_payload)
+                    _refresh_specs_cache()
+                    st.success(f"已新增规格: {new_spec_name}")
+                    st.cache_data.clear()
+                    st.rerun()
 
