@@ -28,6 +28,10 @@ from mike_product_calc.calc.prep_engine import (
     gaps_only,
     sales_to_production,
 )
+from mike_product_calc.calc.inventory_linkage import (
+    build_replenishment_plan,
+    summarize_shortage_alert,
+)
 from mike_product_calc.calc.profit import sku_profit_table
 from mike_product_calc.calc.recipe import build_recipe_table, _parse_spec, _calc_profit_rate
 from mike_product_calc.calc.recipe_mgmt import get_product_with_recipes, build_ingredient_pool
@@ -820,6 +824,27 @@ def _date_str(d: Optional[date]) -> str:
     return d.strftime("%Y-%m-%d")
 
 
+def _build_warehouse_label_map_from_rows(rows: list[dict]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for row in rows or []:
+        code = str(row.get("warehouse_code") or "").strip()
+        if not code:
+            continue
+        name = str(row.get("warehouse_name") or "").strip()
+        out[code] = name or code
+    return out
+
+
+def _build_sku_qty_from_production_rows(rows: list[ProductionRow]) -> Dict[str, float]:
+    sku_qty: Dict[str, float] = {}
+    for r in rows:
+        k = str(r.sku_key).strip()
+        if not k:
+            continue
+        sku_qty[k] = sku_qty.get(k, 0.0) + float(r.qty)
+    return sku_qty
+
+
 def _init_session():
     if "production_plans" not in st.session_state:
         st.session_state["production_plans"] = {}  # Dict[str, List[ProductionRow]]
@@ -935,6 +960,36 @@ with tab4:
     st.subheader("🏭 Step 2: 生产计划")
     st.caption("从销售计划生成后可直接编辑，也可手动录入调整")
 
+    linkage_inventory_rows: list[dict] = []
+    linkage_inventory_error: Optional[str] = None
+    try:
+        linkage_inventory_rows = _st_supa.list_latest_inventory_rows(limit=5000)
+    except Exception as _e:
+        linkage_inventory_error = str(_e)
+
+    warehouse_label_map = _build_warehouse_label_map_from_rows(linkage_inventory_rows)
+    warehouse_codes = sorted(warehouse_label_map.keys())
+    if "tab4_linkage_warehouse_code" not in st.session_state:
+        st.session_state["tab4_linkage_warehouse_code"] = warehouse_codes[0] if warehouse_codes else ""
+    if st.session_state["tab4_linkage_warehouse_code"] not in warehouse_codes:
+        st.session_state["tab4_linkage_warehouse_code"] = warehouse_codes[0] if warehouse_codes else ""
+
+    if warehouse_codes:
+        selected_warehouse_code = st.selectbox(
+            "联动仓库（用于缺货提示和补货计划）",
+            options=warehouse_codes,
+            index=warehouse_codes.index(st.session_state["tab4_linkage_warehouse_code"]),
+            format_func=lambda code: warehouse_label_map.get(code, code),
+            key="tab4_linkage_warehouse_code",
+        )
+    else:
+        selected_warehouse_code = ""
+    selected_warehouse_name = warehouse_label_map.get(selected_warehouse_code, selected_warehouse_code)
+    if linkage_inventory_error:
+        st.caption(f"库存快照读取失败，将跳过补货联动：{linkage_inventory_error}")
+    elif not warehouse_codes:
+        st.caption("暂无库存快照仓库，先完成库存上传后可启用补货联动。")
+
     col_g1, col_g2, col_g3 = st.columns([1, 1, 2])
     lead_days = st.number_input("备货提前天数", min_value=0, max_value=30, value=1, key="lead_days")
     gen_clicked = st.button("🚀 从销售计划生成生产计划", type="primary", use_container_width=True, key="gen_btn")
@@ -959,6 +1014,40 @@ with tab4:
                 plans[PROD_KEY] = prod_rows
                 st.session_state["prod_gen_version"] += 1
                 st.success(f"✅ 已生成生产计划（{len(prod_rows)} 行），可直接在下表编辑")
+                if selected_warehouse_code:
+                    try:
+                        sku_qty = _build_sku_qty_from_production_rows(prod_rows)
+                        immediate_end_date = max((_parse_date(r.date) for r in prod_rows), default=None)
+                        preview_bom = bom_expand_multi(
+                            _st_sheets,
+                            sku_qty,
+                            order_date=immediate_end_date,
+                            basis=str(st.session_state.get("bom_basis", "factory")),
+                            default_lead_days=int(st.session_state.get("bom_lead_days", 3)),
+                            default_loss_rate=float(st.session_state.get("bom_loss_rate", 0)) / 100.0,
+                            default_safety_stock=0.0,
+                        )
+                        warehouse_rows = _st_supa.list_latest_inventory_rows_by_warehouse(
+                            selected_warehouse_code, limit=5000
+                        )
+                        if warehouse_rows:
+                            repl_preview = build_replenishment_plan(
+                                preview_bom, pd.DataFrame(warehouse_rows)
+                            )
+                            summary = summarize_shortage_alert(repl_preview)
+                            if summary["shortage_items"] > 0:
+                                st.warning(
+                                    f"⚠️ 即时缺货提示（{selected_warehouse_name}）："
+                                    f"{summary['shortage_items']} 个物料存在缺口，合计缺口 {summary['total_shortage_qty']:.2f}。"
+                                )
+                            else:
+                                st.success(f"✅ 即时缺货提示（{selected_warehouse_name}）：当前无缺货物料。")
+                        else:
+                            st.info(f"{selected_warehouse_name} 暂无库存快照，已跳过即时缺货提示。")
+                    except Exception as _e:
+                        st.warning(f"即时缺货提示计算失败：{_e}")
+                else:
+                    st.info("未选择联动仓库，已跳过即时缺货提示。")
             else:
                 st.warning("无法展开为生产计划（销售 SKU 缺少配方数据）")
 
@@ -1085,6 +1174,47 @@ with tab4:
                 bom_elapsed = elapsed
 
     if bom_result is not None and not bom_result.empty:
+        st.markdown("#### 📦 补货计划（当前联动仓库）")
+        if not selected_warehouse_code:
+            st.info("请先在 Step 2 选择联动仓库后查看补货计划。")
+        else:
+            try:
+                step3_rows = _st_supa.list_latest_inventory_rows_by_warehouse(
+                    selected_warehouse_code, limit=5000
+                )
+                if not step3_rows:
+                    st.info(f"{selected_warehouse_name} 暂无库存快照，暂时无法生成补货计划。")
+                else:
+                    step3_repl_df = build_replenishment_plan(
+                        bom_result, pd.DataFrame(step3_rows)
+                    )
+                    step3_shortage = summarize_shortage_alert(step3_repl_df)
+                    if step3_shortage["shortage_items"] > 0:
+                        st.warning(
+                            f"⚠️ 缺货提示（{selected_warehouse_name}）："
+                            f"{step3_shortage['shortage_items']} 个物料缺货，"
+                            f"建议补货总量 {step3_shortage['total_shortage_qty']:.2f}。"
+                        )
+                    else:
+                        st.success(f"✅ 缺货提示（{selected_warehouse_name}）：无缺货物料。")
+
+                    st.dataframe(
+                        step3_repl_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "material": st.column_config.TextColumn("物料"),
+                            "demand_qty": st.column_config.NumberColumn("需求量", format="%.2f"),
+                            "available_qty": st.column_config.NumberColumn("当前可用量", format="%.2f"),
+                            "shortage_qty": st.column_config.NumberColumn("缺口量", format="%.2f"),
+                            "suggested_replenish_qty": st.column_config.NumberColumn("建议补货量", format="%.2f"),
+                            "unit": st.column_config.TextColumn("单位"),
+                            "urgency": st.column_config.TextColumn("紧急程度"),
+                        },
+                    )
+            except Exception as _e:
+                st.warning(f"补货计划计算失败：{_e}")
+
         inner_tab_a, inner_tab_b, inner_tab_c = st.tabs(
             ["📦 原料需求汇总", "⚠️ 缺口预警", "📊 统计概览"]
         )

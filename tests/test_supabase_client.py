@@ -164,6 +164,24 @@ def test_list_latest_inventory_rows(client):
         )
 
 
+def test_list_latest_inventory_rows_by_warehouse(client):
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = [{"item_code": "WP0192"}]
+        rows = client.list_latest_inventory_rows_by_warehouse("WH_SH_001", limit=300)
+
+        assert rows[0]["item_code"] == "WP0192"
+        mock_get.assert_called_once_with(
+            "https://test.supabase.co/rest/v1/v_inventory_latest_item_by_warehouse",
+            headers=client._headers(),
+            params={
+                "warehouse_code": "eq.WH_SH_001",
+                "limit": "300",
+                "order": "warehouse_code.asc,item_code.asc",
+            },
+        )
+
+
 def test_get_latest_inventory_snapshot_at(client):
     with patch("requests.get") as mock_get:
         mock_get.return_value.status_code = 200
