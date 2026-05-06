@@ -160,6 +160,75 @@ st.markdown("""
         font-weight: 500;
     }
 
+    /* Overview cockpit cards */
+    .overview-section-title {
+        margin: 10px 0 8px 0;
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text-strong);
+    }
+    .overview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 12px;
+        margin-bottom: 12px;
+    }
+    .overview-card {
+        border: 1px solid var(--panel-border);
+        border-radius: 12px;
+        background: var(--panel);
+        box-shadow: var(--shadow-soft);
+        padding: 12px 14px;
+        min-height: 88px;
+    }
+    .overview-card-title {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-muted);
+    }
+    .overview-card-value {
+        margin: 6px 0 0 0;
+        font-size: 28px;
+        line-height: 1;
+        font-weight: 700;
+        color: var(--text-strong);
+    }
+    .overview-card-note {
+        margin: 8px 0 0 0;
+        font-size: 12px;
+        color: var(--text-muted);
+        line-height: 1.3;
+    }
+    .overview-card-risk {
+        border-left: 4px solid #dc2626;
+        background: #fff7f7;
+    }
+    .overview-card-risk-medium {
+        border-left-color: #f59e0b;
+        background: #fffaf0;
+    }
+    .overview-card-risk-normal {
+        border-left-color: #10b981;
+        background: #f4fff9;
+    }
+    .overview-card-business {
+        border-left: 4px solid #0891b2;
+        background: #f5fcff;
+    }
+    .overview-action-list {
+        border: 1px solid var(--panel-border);
+        border-radius: 12px;
+        background: #fbfdff;
+        padding: 10px 14px;
+        box-shadow: var(--shadow-soft);
+    }
+    .overview-action-list li {
+        color: var(--text-strong);
+        margin: 6px 0;
+        line-height: 1.5;
+    }
+
     /* Sidebar polish */
     section[data-testid="stSidebar"] {
         border-right: 1px solid var(--panel-border);
@@ -262,6 +331,21 @@ st.markdown("""
         /* Plotly charts: full width */
         .stPlotlyChart, .js-plotly-plot, .plot-container {
             max-width: 100% !important;
+        }
+
+        .overview-grid {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+        }
+        .overview-card {
+            min-height: 80px !important;
+            padding: 10px 12px !important;
+        }
+        .overview-card-value {
+            font-size: 24px !important;
+        }
+        .overview-action-list {
+            padding: 8px 12px !important;
         }
 
         /* Tables: scrollable */
@@ -401,6 +485,84 @@ def _full_name(p: dict) -> str:
     return f"{p['name']} {v}".strip() if v else p["name"]
 
 
+def _risk_level(count: int) -> str:
+    """Map risk count to level for dashboard styling and prioritization."""
+    if count <= 0:
+        return "normal"
+    if count <= 2:
+        return "medium"
+    return "high"
+
+
+def _build_action_hints(*, out_of_stock: int, abnormal: int, snapshot_stale: bool) -> list[str]:
+    """Build risk-first action hints for overview dashboard."""
+    hints: list[str] = []
+    if out_of_stock > 0:
+        hints.append("去 Tab8 查看缺货项并确认受影响仓库")
+    if abnormal > 0:
+        hints.append("去 Tab8 检查异常项并核对库存台账")
+    if snapshot_stale:
+        hints.append("先刷新 Supabase 缓存，确认库存快照时效")
+    if not hints:
+        hints.append("当前状态良好，可转到 Tab4 继续产销计划")
+    return hints
+
+
+def _collect_inventory_risk(client) -> dict:
+    """Collect risk summary from latest inventory snapshot with graceful degradation."""
+    try:
+        rows = client.list_latest_inventory_rows(limit=5000)
+        get_snapshot_fn = getattr(client, "get_latest_inventory_snapshot_at", None)
+        snapshot_at = get_snapshot_fn() if callable(get_snapshot_fn) else None
+    except Exception as exc:  # noqa: BLE001 - keep overview resilient to backend issues
+        return {
+            "ready": False,
+            "error": str(exc),
+            "out_of_stock": 0,
+            "abnormal": 0,
+            "snapshot_stale": False,
+            "snapshot_at": None,
+        }
+
+    df = pd.DataFrame(rows or [])
+    out_of_stock = 0
+    abnormal = 0
+    if not df.empty:
+        available = pd.to_numeric(df.get("available_qty"), errors="coerce").fillna(0)
+        out_of_stock = int((available <= 0).sum())
+
+        neg_series = df.get("is_negative_stock")
+        if neg_series is None:
+            neg_series = pd.Series(False, index=df.index)
+        else:
+            neg_series = neg_series.fillna(False).astype(bool)
+
+        mismatch_series = df.get("has_amount_mismatch")
+        if mismatch_series is None:
+            mismatch_series = pd.Series(False, index=df.index)
+        else:
+            mismatch_series = mismatch_series.fillna(False).astype(bool)
+
+        abnormal = int((neg_series | mismatch_series).sum())
+
+    snapshot_stale = False
+    if snapshot_at:
+        parsed_snapshot = pd.to_datetime(snapshot_at, errors="coerce", utc=True)
+        if pd.notna(parsed_snapshot):
+            snapshot_stale = bool(
+                (pd.Timestamp.now(tz="UTC") - parsed_snapshot) > pd.Timedelta(hours=2)
+            )
+
+    return {
+        "ready": True,
+        "error": "",
+        "out_of_stock": out_of_stock,
+        "abnormal": abnormal,
+        "snapshot_stale": snapshot_stale,
+        "snapshot_at": snapshot_at,
+    }
+
+
 @st.fragment
 def _render_inventory_fragment(client) -> None:
     """Render inventory tab in a fragment to avoid full-app reruns on filter submit."""
@@ -410,24 +572,81 @@ def _render_inventory_fragment(client) -> None:
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理", "配方管理", "出品规格", "门店库存"])
 
 with tab1:
-    _heading_with_help("数据概览",
-        "📌 **功能说明**：查看 Supabase 中所有数据的统计概览。\n"
-        "**数据源**：Supabase (PostgreSQL)")
+    _heading_with_help("运营控制台概览",
+        "📌 **功能说明**：风险优先、经营次级、动作导向。\n"
+        "**数据源**：Supabase (PostgreSQL) + 库存快照视图")
     _rm = st.session_state.cached_raw_materials
     _prods_c = st.session_state.cached_products
     _stats = {"total": len(_rm), "active": sum(1 for m in _rm if m.get("status") in (STATUS_ACTIVE, "已生效")), "inactive": sum(1 for m in _rm if m.get("status") not in (STATUS_ACTIVE, "已生效")), "by_category": {}}
     _final = sum(1 for p in _prods_c if p.get("is_final_product"))
     _specs_count = len(st.session_state.cached_all_specs)
+    _risk = _collect_inventory_risk(_st_supa)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("原料总数", _stats["total"])
-        st.metric("最终成品", _final)
-    with col2:
-        st.metric("已上线", _stats["active"])
-        st.metric("出品规格", _specs_count)
-    with col3:
-        st.metric("产品数", len(_prods_c))
+    st.markdown('<div class="overview-section-title">风险区</div>', unsafe_allow_html=True)
+    if not _risk["ready"]:
+        st.warning("库存风险数据未就绪，当前仅展示经营指标。")
+        st.caption(_risk["error"])
+
+    _out_level = _risk_level(_risk["out_of_stock"]) if _risk["ready"] else "normal"
+    _abn_level = _risk_level(_risk["abnormal"]) if _risk["ready"] else "normal"
+    _snap_level = "high" if _risk["snapshot_stale"] else "normal"
+    _snapshot_value = "过期" if _risk["snapshot_stale"] else "正常"
+    if not _risk["ready"]:
+        _snapshot_value = "--"
+        _snap_level = "normal"
+
+    _risk_cards = [
+        ("缺货项", str(_risk["out_of_stock"]) if _risk["ready"] else "--", "可用量 ≤ 0", _out_level),
+        ("异常项", str(_risk["abnormal"]) if _risk["ready"] else "--", "负库存或金额不一致", _abn_level),
+        ("快照时效", _snapshot_value, "超过 2 小时视为过期", _snap_level),
+    ]
+    _risk_html = ['<div class="overview-grid">']
+    for _title, _value, _note, _level in _risk_cards:
+        _risk_html.append(
+            f'<div class="overview-card overview-card-risk overview-card-risk-{_level}">'
+            f'<p class="overview-card-title">{_title}</p>'
+            f'<p class="overview-card-value">{_value}</p>'
+            f'<p class="overview-card-note">{_note}</p>'
+            '</div>'
+        )
+    _risk_html.append("</div>")
+    st.markdown("".join(_risk_html), unsafe_allow_html=True)
+
+    st.markdown('<div class="overview-section-title">经营区</div>', unsafe_allow_html=True)
+    _biz_cards = [
+        ("原料总数", str(_stats["total"]), "当前原料档案数量"),
+        ("产品数", str(len(_prods_c)), "产品主档总数"),
+        ("最终成品", str(_final), "可直接售卖产品"),
+        ("出品规格", str(_specs_count), "已维护规格数量"),
+    ]
+    _biz_html = ['<div class="overview-grid">']
+    for _title, _value, _note in _biz_cards:
+        _biz_html.append(
+            '<div class="overview-card overview-card-business">'
+            f'<p class="overview-card-title">{_title}</p>'
+            f'<p class="overview-card-value">{_value}</p>'
+            f'<p class="overview-card-note">{_note}</p>'
+            '</div>'
+        )
+    _biz_html.append("</div>")
+    st.markdown("".join(_biz_html), unsafe_allow_html=True)
+
+    st.markdown('<div class="overview-section-title">建议动作</div>', unsafe_allow_html=True)
+    _hints = _build_action_hints(
+        out_of_stock=_risk["out_of_stock"],
+        abnormal=_risk["abnormal"],
+        snapshot_stale=_risk["snapshot_stale"],
+    )
+    if not _risk["ready"]:
+        _hints = [
+            "库存风险数据暂不可用，建议先刷新缓存后重试。",
+            *[h for h in _hints if "当前状态良好" not in h],
+        ]
+    _hints_html = ['<div class="overview-action-list"><ol>']
+    for _hint in _hints:
+        _hints_html.append(f"<li>{_hint}</li>")
+    _hints_html.append("</ol></div>")
+    st.markdown("".join(_hints_html), unsafe_allow_html=True)
 
 
 with tab2:
