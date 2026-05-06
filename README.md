@@ -13,7 +13,7 @@
 | F-005 | Tab5 原料管理 | 原料 CRUD（新增/修改/删除）+ Excel 批量同步 | Supabase |
 | F-006 | Tab6 配方管理 | 产品配方 BOM 编辑（引用原料/半成品）| Supabase |
 | F-007 | Tab7 出品规格 | 出品规格配置（多规格/包材/附加配料）| Supabase |
-| F-008 | Inventory Snapshot | 仓库库存导出 xlsx 定时上传、快照留存、异常标记 | Supabase |
+| F-008 | 门店库存驾驶舱 | 双端自适应库存看板（缺货/低库存/异常）+ 仓库库存快照同步 | Supabase |
 
 ## 环境要求
 
@@ -114,6 +114,17 @@ mpc inventory sync /path/to/dir --pattern "仓库库存导出*.xlsx" --dry-run
 - `--max-files <n>` 限制本次处理文件数
 - `--sheet <name>` 指定 sheet（默认 `仓库库存导出`）
 - `--timezone <tz>` 文件名时间解析时区（默认 `Asia/Shanghai`）
+
+## 门店库存驾驶舱（Tab8）
+
+- 入口：`门店库存`（Tab8）
+- 数据源：`v_inventory_latest_item_by_warehouse`
+- 默认规则：
+  - 缺货：`available_qty <= 0`
+  - 低库存：`0 < available_qty <= 5`（阈值可在页面调节）
+  - 异常：`is_negative_stock = true` 或 `has_amount_mismatch = true`
+- 支持筛选：仓库、状态、关键字（编码/名称）
+- 快照时效：超过 2 小时未更新会告警
 
 ## 验证
 

@@ -314,6 +314,27 @@ class MpcSupabaseClient:
         resp.raise_for_status()
         return resp.json()
 
+    def list_latest_inventory_rows(self, limit: int = 5000) -> list[dict]:
+        params = {"limit": str(limit), "order": "warehouse_code.asc,item_code.asc"}
+        resp = requests.get(
+            f"{self._base}/v_inventory_latest_item_by_warehouse",
+            headers=self._headers(),
+            params=params,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_latest_inventory_snapshot_at(self) -> str | None:
+        params = {"select": "snapshot_at", "order": "snapshot_at.desc", "limit": "1"}
+        resp = requests.get(
+            f"{self._base}/inventory_snapshot_batches",
+            headers=self._headers(),
+            params=params,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        return rows[0].get("snapshot_at") if rows else None
+
     # ------------------------------------------------------------------
     # Cost computation
     # ------------------------------------------------------------------

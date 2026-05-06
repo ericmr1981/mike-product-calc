@@ -148,3 +148,39 @@ def test_insert_inventory_items(client):
         mock_post.return_value.json.return_value = [{"id": "i1"}, {"id": "i2"}]
         out = client.insert_inventory_items([{"item_code": "A"}, {"item_code": "B"}])
         assert len(out) == 2
+
+
+def test_list_latest_inventory_rows(client):
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = [{"item_code": "WP0192"}]
+        rows = client.list_latest_inventory_rows(limit=1000)
+
+        assert rows[0]["item_code"] == "WP0192"
+        mock_get.assert_called_once_with(
+            "https://test.supabase.co/rest/v1/v_inventory_latest_item_by_warehouse",
+            headers=client._headers(),
+            params={"limit": "1000", "order": "warehouse_code.asc,item_code.asc"},
+        )
+
+
+def test_get_latest_inventory_snapshot_at(client):
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = [{"snapshot_at": "2026-05-06T12:20:44+00:00"}]
+        ts = client.get_latest_inventory_snapshot_at()
+
+        assert ts == "2026-05-06T12:20:44+00:00"
+        mock_get.assert_called_once_with(
+            "https://test.supabase.co/rest/v1/inventory_snapshot_batches",
+            headers=client._headers(),
+            params={"select": "snapshot_at", "order": "snapshot_at.desc", "limit": "1"},
+        )
+
+
+def test_get_latest_inventory_snapshot_at_empty(client):
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = []
+        ts = client.get_latest_inventory_snapshot_at()
+        assert ts is None

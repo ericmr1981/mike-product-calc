@@ -35,6 +35,7 @@ from mike_product_calc.calc.serving_mgmt import get_final_products
 from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.model.production import ProductionRow
 from mike_product_calc.sync.excel_sync import preview_sync_raw_materials, execute_sync_raw_materials
+from mike_product_calc.ui.inventory_tab import render_inventory_tab
 
 # ── Constants ───────────────────────────────────────────────────────────────
 STATUS_ACTIVE = "上线"
@@ -396,7 +397,7 @@ def _full_name(p: dict) -> str:
     return f"{p['name']} {v}".strip() if v else p["name"]
 
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理", "配方管理", "出品规格"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理", "配方管理", "出品规格", "门店库存"])
 
 with tab1:
     _heading_with_help("数据概览",
@@ -1970,3 +1971,7 @@ with tab7:
                     st.success(f"已新增规格: {new_spec_name}")
                     st.cache_data.clear()
                     st.rerun()
+
+# ── Tab8: 门店库存 ──────────────────────────────────────────
+with tab8:
+    render_inventory_tab(_st_supa)
