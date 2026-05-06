@@ -97,3 +97,88 @@ CREATE TABLE IF NOT EXISTS sync_log (
   details           JSONB,
   created_at        TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 库存快照导入：批次头表
+CREATE TABLE IF NOT EXISTS inventory_snapshot_batches (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_filename       TEXT NOT NULL,
+  source_sheet_name     TEXT NOT NULL DEFAULT '仓库库存导出',
+  source_file_sha256    TEXT,
+  snapshot_at           TIMESTAMPTZ NOT NULL,
+  imported_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  row_count             INTEGER NOT NULL DEFAULT 0,
+  status                TEXT NOT NULL DEFAULT 'imported' CHECK (status IN ('imported', 'partial', 'failed')),
+  warning_count         INTEGER NOT NULL DEFAULT 0,
+  error_count           INTEGER NOT NULL DEFAULT 0,
+  warning_summary       JSONB NOT NULL DEFAULT '[]'::jsonb,
+  error_summary         JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  CONSTRAINT uq_inventory_snapshot_batches_file UNIQUE (source_filename),
+  CONSTRAINT uq_inventory_snapshot_batches_sha UNIQUE (source_file_sha256)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_batches_snapshot_at
+  ON inventory_snapshot_batches(snapshot_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_batches_status
+  ON inventory_snapshot_batches(status);
+
+-- 库存快照导入：明细表
+CREATE TABLE IF NOT EXISTS inventory_snapshot_items (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  batch_id              UUID NOT NULL REFERENCES inventory_snapshot_batches(id) ON DELETE CASCADE,
+  item_code             TEXT NOT NULL,
+  item_name             TEXT NOT NULL,
+  spec                  TEXT,
+  unit                  TEXT NOT NULL,
+  category_lv2          TEXT NOT NULL,
+  category_lv1          TEXT,
+  item_attribute_name   TEXT,
+  warehouse_name        TEXT NOT NULL,
+  warehouse_code        TEXT NOT NULL,
+  stock_qty             NUMERIC(18,6) NOT NULL,
+  available_qty         NUMERIC(18,6) NOT NULL,
+  occupied_qty          NUMERIC(18,6) NOT NULL,
+  expected_out_qty      NUMERIC(18,6) NOT NULL,
+  expected_in_qty       NUMERIC(18,6) NOT NULL,
+  current_amount        NUMERIC(18,6) NOT NULL,
+  stock_unit_price      NUMERIC(18,6) NOT NULL,
+  is_negative_stock     BOOLEAN NOT NULL DEFAULT FALSE,
+  has_amount_mismatch   BOOLEAN NOT NULL DEFAULT FALSE,
+  data_warnings         JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  CONSTRAINT uq_inventory_items_batch_item_wh UNIQUE (batch_id, item_code, warehouse_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_items_batch
+  ON inventory_snapshot_items(batch_id);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_items_item_code
+  ON inventory_snapshot_items(item_code);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_items_warehouse_code
+  ON inventory_snapshot_items(warehouse_code);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_items_negative_stock
+  ON inventory_snapshot_items(is_negative_stock)
+  WHERE is_negative_stock = TRUE;
+
+-- 最新库存视图：每个仓库每个品项取最新快照
+CREATE OR REPLACE VIEW v_inventory_latest_item_by_warehouse AS
+WITH ranked AS (
+  SELECT
+    b.snapshot_at,
+    i.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY i.item_code, i.warehouse_code
+      ORDER BY b.snapshot_at DESC, b.imported_at DESC
+    ) AS rn
+  FROM inventory_snapshot_items i
+  JOIN inventory_snapshot_batches b ON b.id = i.batch_id
+  WHERE b.status IN ('imported', 'partial')
+)
+SELECT *
+FROM ranked
+WHERE rn = 1;

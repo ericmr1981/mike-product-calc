@@ -14,6 +14,8 @@ from pathlib import Path
 import tempfile
 from tempfile import TemporaryDirectory
 
+from openpyxl import Workbook
+
 REPO = Path(__file__).resolve().parents[1]
 XLSX = REPO / "data" / "蜜可诗产品库.xlsx"
 SRC = REPO / "src"
@@ -256,6 +258,33 @@ def test_cli_auto_load_state_xlsx():
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     assert payload["count"] >= 1
+
+
+def test_cli_inventory_sync_dry_run(tmp_path: Path):
+    f = tmp_path / "仓库库存导出2026年05月06日20时20分44秒.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "仓库库存导出"
+    ws.append(
+        [
+            "品项编码", "品项名称", "规格", "单位", "二级品项类别", "一级品项类别", "品项属性名",
+            "仓库名称", "仓库编码", "库存量", "可用量", "占用量", "预计出库量", "预计入库量",
+            "现存金额", "库存单价",
+        ]
+    )
+    ws.append(
+        [
+            "WP0192", "草莓丁", "1KG", "包", "辅料", "", "", "新天地广场", "GM002",
+            4.0, 4.0, 0.0, 0.0, 0.0, 80.0, 20.0,
+        ]
+    )
+    wb.save(f)
+    r = _run_cli("inventory", "sync", str(f), "--dry-run")
+    assert r.returncode == 0, r.stderr
+    payload = json.loads(r.stdout)
+    assert payload["cmd"] == "inventory-sync"
+    assert payload["count"] == 1
+    assert payload["rows"][0]["status"] == "dry_run"
 
 
 # ── 10. JSON output parseability ─────────────────────────────────────────────

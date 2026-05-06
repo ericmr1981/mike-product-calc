@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from dataclasses import asdict
 from datetime import date
@@ -61,6 +62,11 @@ from mike_product_calc.data.upload import (
     DuplicateFileError,
 )
 from mike_product_calc.data.cli_supabase import get_client
+from mike_product_calc.data.inventory_upload import (
+    InventoryUploadError,
+    discover_inventory_files,
+    sync_inventory_file,
+)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -659,6 +665,53 @@ def cmd_spec_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_inventory_sync(args: argparse.Namespace) -> int:
+    """Upload warehouse inventory snapshot xlsx to Supabase."""
+    client = None if args.dry_run else get_client()
+    target = Path(args.path)
+    files = discover_inventory_files(target, pattern=args.pattern)
+    if args.max_files and args.max_files > 0:
+        files = files[: args.max_files]
+
+    rows: list[dict[str, Any]] = []
+    for fp in files:
+        try:
+            result = sync_inventory_file(
+                client,
+                fp,
+                sheet_name=args.sheet,
+                timezone_name=args.timezone,
+                dry_run=args.dry_run,
+            )
+            rows.append(result)
+            if args.archive_dir and not args.dry_run and result.get("status") != "skipped_duplicate":
+                archive_dir = Path(args.archive_dir)
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                dst = archive_dir / fp.name
+                if dst.exists():
+                    suffix = date.today().strftime("%Y%m%d")
+                    dst = archive_dir / f"{fp.stem}.{suffix}.xlsx"
+                shutil.move(str(fp), str(dst))
+                result["archived_to"] = str(dst)
+        except InventoryUploadError as exc:
+            rows.append(
+                {
+                    "file": str(fp),
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
+
+    payload = {
+        "cmd": "inventory-sync",
+        "count": len(rows),
+        "rows": rows,
+    }
+    _dump_json(payload, out=args.out)
+    has_failed = any(r.get("status") == "failed" for r in rows)
+    return 2 if has_failed else 0
+
+
 def _load_json_arg(data: str) -> dict | list:
     """Load JSON from a file path or inline string."""
     p = Path(data)
@@ -1096,6 +1149,21 @@ def build_parser() -> argparse.ArgumentParser:
     ss.set_defaults(func=cmd_spec_set)
     for _p in [sl, ss]:
         _p.add_argument("--out", help="Write JSON output to file")
+
+    # ── inventory ─────────────────────────────────────────────────────────────
+    inv = sub.add_parser("inventory", help="Warehouse inventory snapshot sync (Supabase)")
+    inv.set_defaults(func=lambda a: inv.print_help())
+    isub = inv.add_subparsers(dest="inventory_cmd")
+    ins = isub.add_parser("sync", help="Sync one xlsx file or a directory of files")
+    ins.add_argument("path", help="xlsx file path, or directory to scan")
+    ins.add_argument("--pattern", default="仓库库存导出*.xlsx", help="Glob pattern for directory mode")
+    ins.add_argument("--sheet", default="仓库库存导出", help="Sheet name to read")
+    ins.add_argument("--timezone", default="Asia/Shanghai", help="Timezone for filename datetime parsing")
+    ins.add_argument("--max-files", type=int, default=0, help="Process only first N files (0 = all)")
+    ins.add_argument("--archive-dir", help="Move successfully processed files into this directory")
+    ins.add_argument("--dry-run", action="store_true", help="Validate only, do not write Supabase")
+    ins.add_argument("--out", help="Write JSON output to file")
+    ins.set_defaults(func=cmd_inventory_sync)
 
     # ── state ─────────────────────────────────────────────────────────────────
     _add_state_subparser(sub)

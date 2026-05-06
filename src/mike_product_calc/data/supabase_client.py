@@ -257,6 +257,63 @@ class MpcSupabaseClient:
         resp.raise_for_status()
         return resp.json()
 
+    def query_table_where(self, table: str, params: dict[str, str]) -> list[dict]:
+        """Query a table with explicit PostgREST filter params."""
+        resp = requests.get(f"{self._base}/{table}", headers=self._headers(), params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    # ------------------------------------------------------------------
+    # Inventory snapshot upload
+    # ------------------------------------------------------------------
+
+    def find_inventory_batch(
+        self, *, source_filename: str, source_file_sha256: str | None = None
+    ) -> dict | None:
+        params = {"source_filename": f"eq.{source_filename}", "limit": "1"}
+        resp = requests.get(
+            f"{self._base}/inventory_snapshot_batches", headers=self._headers(), params=params
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        if rows:
+            return rows[0]
+        if source_file_sha256:
+            params = {"source_file_sha256": f"eq.{source_file_sha256}", "limit": "1"}
+            resp = requests.get(
+                f"{self._base}/inventory_snapshot_batches", headers=self._headers(), params=params
+            )
+            resp.raise_for_status()
+            rows = resp.json()
+            if rows:
+                return rows[0]
+        return None
+
+    def create_inventory_batch(self, data: dict) -> dict:
+        resp = requests.post(
+            f"{self._base}/inventory_snapshot_batches", headers=self._headers(), json=[data]
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        return rows[0]
+
+    def update_inventory_batch(self, batch_id: str, data: dict) -> dict:
+        resp = requests.patch(
+            f"{self._base}/inventory_snapshot_batches?id=eq.{batch_id}",
+            headers=self._headers(),
+            json=data,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        return rows[0] if rows else {}
+
+    def insert_inventory_items(self, rows: list[dict]) -> list[dict]:
+        resp = requests.post(
+            f"{self._base}/inventory_snapshot_items", headers=self._headers(), json=rows
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     # ------------------------------------------------------------------
     # Cost computation
     # ------------------------------------------------------------------
