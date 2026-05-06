@@ -132,7 +132,8 @@ def render_inventory_tab(client) -> None:
 
     reorder_point = st.number_input("低库存阈值", min_value=0.0, value=5.0, step=1.0)
     try:
-        snapshot_at = client.get_latest_inventory_snapshot_at()
+        get_snapshot_fn = getattr(client, "get_latest_inventory_snapshot_at", None)
+        snapshot_at = get_snapshot_fn() if callable(get_snapshot_fn) else None
         rows = client.list_latest_inventory_rows(limit=5000)
     except Exception as exc:  # noqa: BLE001 - keep tab resilient to backend schema state
         if _is_http_404(exc):
