@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import sys
+import tempfile
 from datetime import date, datetime
 from pathlib import Path
 
@@ -13,7 +15,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from mike_product_calc.calc.recipe import build_recipe_table, _parse_spec, _calc_profit_rate
+from mike_product_calc.calc.material_mgmt import get_categories, get_material_stats, search_materials
 from mike_product_calc.calc.material_sim import (
     Scenario,
     ScenarioStore,
@@ -26,7 +28,45 @@ from mike_product_calc.calc.prep_engine import (
     sales_to_production,
 )
 from mike_product_calc.calc.profit import sku_profit_table
+from mike_product_calc.calc.recipe import build_recipe_table, _parse_spec, _calc_profit_rate
+from mike_product_calc.calc.recipe_mgmt import get_product_with_recipes, build_ingredient_pool
+from mike_product_calc.calc.serving_mgmt import get_final_products
+from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.model.production import ProductionRow
+from mike_product_calc.sync.excel_sync import preview_sync_raw_materials, execute_sync_raw_materials
+
+# ── Constants ───────────────────────────────────────────────────────────────
+STATUS_ACTIVE = "上线"
+STATUS_INACTIVE = "下线"
+CATEGORY_PACKAGING = "包材"
+
+
+def _extract_id(val):
+    """Extract UUID from expanded object or plain string."""
+    if isinstance(val, dict):
+        return val.get("id")
+    return val
+
+
+def _normalize_spec_payload(sp: dict) -> dict:
+    """Normalize a single serving spec dict for set_serving_specs API."""
+    spec_item = {
+        "product_id": sp["product_id"],
+        "spec_name": sp["spec_name"],
+        "quantity": sp.get("quantity"),
+        "main_material_id": _extract_id(sp.get("main_material_id")),
+        "packaging_id": _extract_id(sp.get("packaging_id")),
+        "packaging_qty": sp.get("packaging_qty", 1),
+        "product_price": sp.get("product_price"),
+    }
+    toppings = []
+    for t in sp.get("serving_spec_toppings", []):
+        mat_id = _extract_id(t.get("material_id"))
+        if mat_id:
+            toppings.append({"material_id": mat_id, "quantity": t.get("quantity", 1)})
+    if toppings:
+        spec_item["_toppings"] = toppings
+    return spec_item
 
 
 st.set_page_config(page_title="mike-product-calc", layout="wide")
@@ -67,14 +107,21 @@ st.markdown("""
         border: 5px solid transparent; border-top-color: #2d2d2d;
     }
 
-    /* Responsive column collapse */
+    /* ── Responsive: mobile (≤768px) ───────────────────────────── */
     @media (max-width: 768px) {
+        /* Core column collapse */
         .stColumn, div[data-testid="column"] {
             flex: 1 1 100% !important;
             width: 100% !important;
             min-width: 100% !important;
         }
         section[data-testid="stSidebar"] {display: none !important;}
+
+        /* Metrics: 2-per-row grid */
+        div[data-testid="metric-container"] {
+            flex: 1 1 45% !important;
+            min-width: 120px !important;
+        }
 
         /* Touch-friendly controls */
         .stButton button, .stDownloadButton button {
@@ -93,8 +140,43 @@ st.markdown("""
         h2 {font-size: 18px !important;}
         h3 {font-size: 16px !important;}
 
-        /* Fix data editor overflow */
-        .stDataFrame, div[data-testid="stDataFrame"] {overflow-x: auto !important;}
+        /* Tab bar: scrollable, no wrap */
+        button[data-baseweb="tab"] {
+            font-size: 13px !important;
+            padding: 8px 6px !important;
+        }
+        div[data-testid="stTabs"] {
+            overflow-x: auto !important;
+            flex-wrap: nowrap !important;
+        }
+
+        /* Plotly charts: full width */
+        .stPlotlyChart, .js-plotly-plot, .plot-container {
+            max-width: 100% !important;
+        }
+
+        /* Tables: scrollable */
+        .stDataFrame, div[data-testid="stDataFrame"] {
+            overflow-x: auto !important;
+            max-width: 100vw !important;
+        }
+
+        /* Caption text */
+        .stCaption {
+            font-size: 13px !important;
+            line-height: 1.4 !important;
+        }
+
+        /* Form columns stack vertically */
+        div[data-testid="stForm"] div[data-testid="column"] {
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
+        }
+
+        /* Bordered container padding */
+        div[data-testid="stVerticalBlockBorder"] {
+            padding: 10px !important;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -158,19 +240,21 @@ with tab1:
     _heading_with_help("数据概览",
         "📌 **功能说明**：查看 Supabase 中所有数据的统计概览。\n"
         "**数据源**：Supabase (PostgreSQL)")
-    from mike_product_calc.calc.material_mgmt import get_material_stats
     _rm = st.session_state.cached_raw_materials
     _prods_c = st.session_state.cached_products
-    _stats = {"total": len(_rm), "active": sum(1 for m in _rm if m.get("status") in ("上线", "已生效")), "inactive": sum(1 for m in _rm if m.get("status") not in ("上线", "已生效")), "by_category": {}}
+    _stats = {"total": len(_rm), "active": sum(1 for m in _rm if m.get("status") in (STATUS_ACTIVE, "已生效")), "inactive": sum(1 for m in _rm if m.get("status") not in (STATUS_ACTIVE, "已生效")), "by_category": {}}
     _final = sum(1 for p in _prods_c if p.get("is_final_product"))
     _specs_count = len(st.session_state.cached_all_specs)
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("原料总数", _stats["total"])
-    col2.metric("已上线", _stats["active"])
-    col3.metric("产品数", len(_prods_c))
-    col4.metric("最终成品", _final)
-    col5.metric("出品规格", _specs_count)
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("原料总数", _stats["total"])
+        st.metric("最终成品", _final)
+    with col2:
+        st.metric("已上线", _stats["active"])
+        st.metric("出品规格", _specs_count)
+    with col3:
+        st.metric("产品数", len(_prods_c))
 
 
 with tab2:
@@ -187,7 +271,7 @@ with tab2:
     _sel_table = st.selectbox("选择表", options=list(_table_names.keys()),
         format_func=lambda x: f"{_table_names.get(x, x)} ({x})")
     try:
-        _table_data = _st_supa._client.table(_sel_table).select("*").limit(200).execute().data
+        _table_data = _st_supa.query_table(_sel_table, limit=200)
         if _table_data:
             st.dataframe(pd.DataFrame(_table_data), use_container_width=True, height=420, hide_index=True)
         else:
@@ -743,7 +827,7 @@ with tab4:
     st.subheader("🔍 Step 3: BOM 展开 — 原料需求计算")
     st.caption("三级展开：SKU → 主原料/配料 → 原料；支持损耗率、最小采购单位、批次取整、提前期。")
 
-    col_bom1, col_bom2, col_bom3, col_bom4 = st.columns([2, 1, 1, 2])
+    col_bom1, col_bom2, col_bom3, col_bom4 = st.columns(4)
     with col_bom1:
         bom_lead_days = st.number_input(
             "提前期（天）", min_value=0, max_value=90, value=3, key="bom_lead_days"
@@ -933,20 +1017,6 @@ with tab5:
         "**字段说明**：编码=品项编码（自动生成）；名称=品项名称；类别=调味酱/包材/乳制品等；"
         "单价=加价后有效采购价。")
 
-    from mike_product_calc.calc.material_mgmt import get_categories, get_material_stats, search_materials
-    from mike_product_calc.sync.excel_sync import preview_sync_raw_materials, execute_sync_raw_materials
-
-    # ── Init Supabase client ──
-    if "supabase" not in st.session_state:
-        try:
-            supabase_url = st.secrets["supabase"]["url"]
-            supabase_key = st.secrets["supabase"]["service_key"]
-            from mike_product_calc.data.supabase_client import MpcSupabaseClient
-            st.session_state.supabase = MpcSupabaseClient(supabase_url, supabase_key)
-        except Exception as e:
-            st.error(f"Supabase 连接失败: {e}")
-            st.stop()
-
     client = st.session_state.supabase
 
     # ── Stats row ──
@@ -962,11 +1032,9 @@ with tab5:
         st.caption("上传包含总原料成本表的 Excel 文件。上传后预览差异再确认同步。")
         uploaded_raw = st.file_uploader("选择 Excel 文件", type=["xlsx"], key="raw_xlsx_upload")
         if uploaded_raw is not None:
-            import tempfile
             with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
                 tmp.write(uploaded_raw.getvalue())
                 tmp_path = tmp.name
-            from mike_product_calc.data.loader import load_workbook
             raw_wb = load_workbook(Path(tmp_path))
             diffs = preview_sync_raw_materials(raw_wb.sheets, client)
             df_diff = pd.DataFrame(diffs)
@@ -1038,7 +1106,7 @@ with tab5:
                 new_base_price = st.number_input("加价前单价 *", min_value=0.0, format="%.4f")
                 new_final_price = st.number_input("加价后单价 *", min_value=0.0001, format="%.4f")
                 new_item_type = st.selectbox("品项类型 *", options=["普通", "特殊"])
-                new_status = st.selectbox("状态 *", options=["上线", "下线"])
+                new_status = st.selectbox("状态 *", options=[STATUS_ACTIVE, STATUS_INACTIVE])
             new_notes = st.text_area("备注（可选）")
 
             submitted = st.form_submit_button("保存", type="primary")
@@ -1097,8 +1165,8 @@ with tab5:
                         value=float(edit_material.get("final_price") or 0))
                     edit_item_type = st.selectbox("品项类型 *", options=["普通", "特殊"],
                         index=0 if edit_material.get("item_type") != "特殊" else 1)
-                    edit_status = st.selectbox("状态 *", options=["上线", "下线"],
-                        index=0 if edit_material.get("status") != "下线" else 1)
+                    edit_status = st.selectbox("状态 *", options=[STATUS_ACTIVE, STATUS_INACTIVE],
+                        index=0 if edit_material.get("status") != STATUS_INACTIVE else 1)
                 edit_notes = st.text_area("备注（可选）", value=edit_material.get("notes") or "")
 
                 submitted = st.form_submit_button("保存修改", type="primary")
@@ -1153,24 +1221,14 @@ with tab6:
         "📌 **功能说明**：管理产品的配方明细。支持引用采购原料和半成品作为配料。\n"
         "**使用方式**：选择产品 → 编辑配方明细 → 保存。")
 
-    from mike_product_calc.calc.recipe_mgmt import get_product_with_recipes, build_ingredient_pool
-
-    import re as _re
-
     def _split_version(name: str) -> tuple[str, str]:
         """Split '木姜子甜橙 2.0' → ('木姜子甜橙', '2.0')"""
-        m = _re.match(r'^(.+?)\s*(\d+\.\d+)$', name.strip())
+        m = re.match(r'^(.+?)\s*(\d+\.\d+)$', name.strip())
         if m:
             return m.group(1).strip(), m.group(2)
         return name.strip(), ""
 
     client = st.session_state.supabase
-
-    def _extract_id(val):
-        """Extract UUID from expanded object or plain string."""
-        if isinstance(val, dict):
-            return val.get("id")
-        return val
 
     # ── Left column: product list ──
     col_left, col_right = st.columns([1, 2])
@@ -1389,8 +1447,6 @@ with tab7:
         "**使用方式**：选择产品 → 编辑出品规格 → 保存。")
 
     client = st.session_state.supabase
-    from mike_product_calc.calc.serving_mgmt import get_final_products
-
     # ── Left column: product list ──
     col_left7, col_right7 = st.columns([1, 2])
 
@@ -1414,7 +1470,7 @@ with tab7:
         # Load pools (from cache)
         _t7_rm = st.session_state.cached_raw_materials
         all_mat_options = {f"{m['name']} ({m.get('category','')})": m["id"] for m in _t7_rm}
-        pkg_options = {rm["name"]: rm["id"] for rm in _t7_rm if rm.get("category") in ("包材", None)}
+        pkg_options = {rm["name"]: rm["id"] for rm in _t7_rm if rm.get("category") in (CATEGORY_PACKAGING, None)}
         _t7_all_prods = st.session_state.cached_products
         main_prod_options = {f"{p['name']} v{p.get('version','')}".rstrip("v "): p["id"] for p in _t7_all_prods}
 
@@ -1457,7 +1513,7 @@ with tab7:
                     if isinstance(mat, dict):
                         _cat = mat.get("category", "")
                         _label = f"{mat.get('name','')}×{t.get('quantity',1)}"
-                        if _cat == "包材":
+                        if _cat == CATEGORY_PACKAGING:
                             pkg_topping_names.append(_label)
                         else:
                             reg_topping_names.append(_label)
@@ -1474,7 +1530,7 @@ with tab7:
                 pkg_names.extend(pkg_topping_names)
 
                 with st.container(border=True):
-                    col_s1, col_s2 = st.columns([3, 1])
+                    col_s1, col_s2 = st.columns([2, 1])
                     with col_s1:
                         _price = s.get("product_price")
                         if _price is not None:
@@ -1497,28 +1553,7 @@ with tab7:
                             st.rerun()
                         if st.button("🗑️ 删除", key=f"del_{s['id']}", use_container_width=True):
                             remaining = [sp for sp in specs if sp["id"] != s["id"]]
-                            normalized = []
-                            for sp in remaining:
-                                spec_item = {
-                                    "product_id": sp["product_id"],
-                                    "spec_name": sp["spec_name"],
-                                    "quantity": sp.get("quantity"),
-                                    "main_material_id": _extract_id(sp.get("main_material_id")),
-                                    "packaging_id": _extract_id(sp.get("packaging_id")),
-                                    "packaging_qty": sp.get("packaging_qty", 1),
-                                    "product_price": sp.get("product_price"),
-                                }
-                                _existing_toppings = []
-                                for t in sp.get("serving_spec_toppings", []):
-                                    mat_id = _extract_id(t.get("material_id"))
-                                    if mat_id:
-                                        _existing_toppings.append({
-                                            "material_id": mat_id,
-                                            "quantity": t.get("quantity", 1),
-                                        })
-                                if _existing_toppings:
-                                    spec_item["_toppings"] = _existing_toppings
-                                normalized.append(spec_item)
+                            normalized = [_normalize_spec_payload(sp) for sp in remaining]
                             client.set_serving_specs(sel_prod_id, normalized)
                             _refresh_specs_cache()
                             st.cache_data.clear()
@@ -1534,13 +1569,13 @@ with tab7:
                             _edit_pkg_names.append(_pkg["name"])
                         for _t in s.get("serving_spec_toppings", []):
                             _m = _t.get("material_id")
-                            if isinstance(_m, dict) and _m.get("category") == "包材" and _m.get("name"):
+                            if isinstance(_m, dict) and _m.get("category") == CATEGORY_PACKAGING and _m.get("name"):
                                 _edit_pkg_names.append(_m["name"])
                         # Pre-fill: current toppings (non-包材 items)
                         _edit_topping_rows = []
                         for _t in s.get("serving_spec_toppings", []):
                             _m = _t.get("material_id")
-                            if isinstance(_m, dict) and _m.get("category") != "包材":
+                            if isinstance(_m, dict) and _m.get("category") != CATEGORY_PACKAGING:
                                 _tk = f"{_m['name']} ({_m.get('category','')})"
                                 if _tk in _ing_mat_options:
                                     _edit_topping_rows.append({"配料": _tk, "用量 (克/个/毫升)": _t.get("quantity", 1)})
@@ -1566,7 +1601,7 @@ with tab7:
                                 )
                             with _col2:
                                 _edit_pkgs = st.multiselect(
-                                    "包材", options=list(pkg_options.keys()),
+                                    CATEGORY_PACKAGING, options=list(pkg_options.keys()),
                                     default=_edit_pkg_names, key=f"edit_pkg_{s['id']}",
                                 )
                                 _edit_price = st.number_input(
@@ -1616,7 +1651,8 @@ with tab7:
                                 for _sp in specs:
                                     if _sp["id"] == s["id"]:
                                         # Replaced with edited version
-                                        _spec_item = {
+                                        _all_tops = _edit_pkg_toppings + _edit_topping_data
+                                        _edit_payload.append({
                                             "product_id": sel_prod_id,
                                             "spec_name": _edit_spec_name,
                                             "quantity": _edit_main_qty,
@@ -1624,31 +1660,10 @@ with tab7:
                                             "packaging_id": _edit_pkg_id,
                                             "packaging_qty": 1,
                                             "product_price": _edit_price,
-                                        }
-                                        _all_tops = _edit_pkg_toppings + _edit_topping_data
-                                        if _all_tops:
-                                            _spec_item["_toppings"] = _all_tops
-                                        _edit_payload.append(_spec_item)
+                                            **({"_toppings": _all_tops} if _all_tops else {}),
+                                        })
                                     else:
-                                        _spec_item = {
-                                            "product_id": _sp["product_id"],
-                                            "spec_name": _sp["spec_name"],
-                                            "quantity": _sp.get("quantity"),
-                                            "main_material_id": _extract_id(_sp.get("main_material_id")),
-                                            "packaging_id": _extract_id(_sp.get("packaging_id")),
-                                            "packaging_qty": _sp.get("packaging_qty", 1),
-                                            "product_price": _sp.get("product_price"),
-                                        }
-                                        _existing_tops = []
-                                        for _t in _sp.get("serving_spec_toppings", []):
-                                            _mid = _extract_id(_t.get("material_id"))
-                                            if _mid:
-                                                _existing_tops.append({
-                                                    "material_id": _mid, "quantity": _t.get("quantity", 1),
-                                                })
-                                        if _existing_tops:
-                                            _spec_item["_toppings"] = _existing_tops
-                                        _edit_payload.append(_spec_item)
+                                        _edit_payload.append(_normalize_spec_payload(_sp))
 
                                 client.set_serving_specs(sel_prod_id, _edit_payload)
                                 st.session_state.pop("_editing_spec", None)
@@ -1677,7 +1692,7 @@ with tab7:
                     new_main_qty = st.number_input("主原料用量 (克)", min_value=0.0, format="%.1f", value=120.0)
                 with col_q2:
                     selected_pkgs = st.multiselect(
-                        "包材", options=list(pkg_options.keys()), key="new_pkg"
+                        CATEGORY_PACKAGING, options=list(pkg_options.keys()), key="new_pkg"
                     )
                     new_price = st.number_input("定价 (元)", min_value=0.0, format="%.2f", value=0.0, key="new_spec_price")
 
@@ -1733,29 +1748,7 @@ with tab7:
                             })
 
                     # ── Preserve existing specs ──
-                    existing_payload = []
-                    for sp in specs:
-                        spec_item = {
-                            "product_id": sp["product_id"],
-                            "spec_name": sp["spec_name"],
-                            "quantity": sp.get("quantity"),
-                            "main_material_id": _extract_id(sp.get("main_material_id")),
-                            "packaging_id": _extract_id(sp.get("packaging_id")),
-                            "packaging_qty": sp.get("packaging_qty", 1),
-                            "product_price": sp.get("product_price"),
-                        }
-                        # Preserve existing toppings
-                        _existing_toppings = []
-                        for t in sp.get("serving_spec_toppings", []):
-                            mat_id = _extract_id(t.get("material_id"))
-                            if mat_id:
-                                _existing_toppings.append({
-                                    "material_id": mat_id,
-                                    "quantity": t.get("quantity", 1),
-                                })
-                        if _existing_toppings:
-                            spec_item["_toppings"] = _existing_toppings
-                        existing_payload.append(spec_item)
+                    existing_payload = [_normalize_spec_payload(sp) for sp in specs]
 
                     # ── New spec ──
                     all_toppings = pkg_toppings + topping_data

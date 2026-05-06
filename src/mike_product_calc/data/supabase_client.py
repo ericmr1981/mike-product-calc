@@ -247,6 +247,17 @@ class MpcSupabaseClient:
         return new_specs
 
     # ------------------------------------------------------------------
+    # Generic table query
+    # ------------------------------------------------------------------
+
+    def query_table(self, table: str, limit: int = 200) -> list[dict]:
+        """Query any table with a limit (for data browsing in Tab2)."""
+        params = {"limit": str(limit)}
+        resp = requests.get(f"{self._base}/{table}", headers=self._headers(), params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    # ------------------------------------------------------------------
     # Sync Log
     # ------------------------------------------------------------------
 
