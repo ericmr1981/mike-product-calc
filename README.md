@@ -2,22 +2,20 @@
 
 蜜可诗产品经营决策台 — 基于真实业务数据（蜜可诗产品库.xlsx）的 Python + Streamlit Web 应用。
 
-## 功能一览（12 Features）
+## 功能一览
 
 | # | 功能 | Tab |
 |---|------|-----|
 | F-001 | Excel 数据解析与校验 V2（健壮 sheet 匹配、自动表头检测）| Tab1 |
 | F-002 | SKU 毛利分析（出厂/门店双口径，含成本瀑布图）| Tab2 |
 | F-003 | 目标毛利率反推原料定价 | Tab2 |
-| F-004 | 原料价格模拟器（版本管理 + 任意两版对比）| Tab4 |
-| F-005 | 生产计划录入（data_editor + CSV 模板导入/导出）| Tab5 |
-| F-006 | 备料计划引擎（BOM 三级展开 + 缺口预警）| Tab6 |
-| F-007 | 采购建议页（按原料汇总 + 紧急项标红）| Tab7 |
-| F-008 | 产品组合评估（实时 KPI + 方案 A/B/C 保存对比）| Tab8 |
-| F-009 | 数据健康与可信度提示（issues 关联 SKU/原料）| Tab1 |
-| F-010 | 多场景对比（多组销量假设 + 差异表）| Tab9 |
-| F-011 | 产能需求估算（评分可视化 + 高压 SKU 标红）| Tab11 |
-| F-012 | 选品组合优化器（枚举 Top-3 + 可解释推荐）| Tab10 |
+| F-004 | 原料价格模拟器（版本管理 + 任意两版对比）| Tab3 |
+| F-005 | 生产计划录入（data_editor + CSV 模板导入/导出）| Tab4 |
+| F-006 | 备料计划引擎（BOM 三级展开 + 缺口预警）| Tab4 |
+| F-007 | 采购建议页（按原料汇总 + 紧急项标红）| Tab4 |
+| F-008 | 原料管理（CRUD + Excel 同步，Supabase）| Tab5 |
+| F-009 | 配方管理 BOM（产品配方编辑，Supabase）| Tab6 |
+| F-010 | 出品规格管理（多规格配置，Supabase）| Tab7 |
 
 ## 环境要求
 
@@ -51,45 +49,106 @@ streamlit run app.py
 
 > 真实业务数据 `蜜可诗产品库.xlsx` 不在仓库里，需自行准备并在 UI 中上传。
 
+## Supabase 配置
+
+原料管理、配方管理、出品规格管理使用 Supabase (PostgreSQL) 存储。需要配置凭据：
+
+```bash
+# 方案 A：secrets 文件
+mkdir -p .streamlit
+# 在 .streamlit/secrets.toml 中写入：
+# [supabase]
+# url = "https://xxx.supabase.co"
+# service_key = "sb_secret_xxx"
+
+# 方案 B：环境变量
+export SUPABASE_URL="https://xxx.supabase.co"
+export SUPABASE_SERVICE_KEY="sb_secret_xxx"
+```
+
+## Agent CLI（原料/配方/规格管理）
+
+安装后可直接在终端使用，输出纯 JSON，适合 AI Agent 调用：
+
+```bash
+# 原料管理
+mpc material list                    # 列出所有原料
+mpc material list --category 乳制品   # 按类别过滤
+mpc material list --status 上线       # 按状态过滤
+mpc material get <uuid>              # 查看单个原料
+mpc material create '{"name":"燕麦奶","category":"乳制品",...}'  # 新增（JSON 字符串）
+mpc material create /path/to/file.json                              # 新增（JSON 文件）
+mpc material update <uuid> '{"base_price":12.0}'                   # 修改
+mpc material delete <uuid>           # 删除
+
+# 产品查询
+mpc product list                     # 列出所有产品
+mpc product list --final-only        # 只列最终成品
+mpc product get <uuid>               # 查看单个产品
+
+# 配方管理
+mpc recipe list <product-uuid>       # 查看配方明细
+mpc recipe set <product-uuid> recipes.json  # 替换配方
+
+# 出品规格管理
+mpc spec list <product-uuid>         # 查看出品规格
+mpc spec set <product-uuid> specs.json     # 替换出品规格
+```
+
 ## 验证
 
 ```bash
 # 编译检查
 python -m py_compile src/mike_product_calc/cli.py src/mike_product_calc/state.py src/mike_product_calc/__main__.py
 
-# 自动化测试（55 个测试，全部通过）
+# 自动化测试（84+ 个测试，全部通过）
 pytest tests/ -q
 
 # CLI 校验（安装后直接使用）
-python3 -m mike_product_calc --help
-python3 -m mike_product_calc state --help
+mpc --help
+mpc material --help
+mpc product --help
+mpc recipe --help
+mpc spec --help
 ```
 
 ## 项目结构
 
 ```
 mike-product-calc/
-├── app.py                        # Streamlit Web UI（11 个 Tab）
+├── app.py                        # Streamlit Web UI（7 个 Tab）
 ├── src/mike_product_calc/
+│   ├── cli.py                    # CLI 入口（mpc 命令）
+│   ├── state.py                  # Session state 管理
 │   ├── data/
+│   │   ├── supabase_client.py    # Supabase REST API 客户端
+│   │   ├── cli_supabase.py       # CLI Supabase 连接（env → secrets）
+│   │   ├── supabase_adapter.py   # Supabase → DataFrame 适配
 │   │   ├── loader.py             # Excel 加载 + sheet 匹配
 │   │   ├── validator.py          # 校验规则 + ValidationReport
+│   │   ├── upload.py             # 文件上传注册
 │   │   └── shared.py             # 共享工具函数
 │   ├── calc/
 │   │   ├── profit.py             # 毛利计算（F-002）
+│   │   ├── profit_oracle.py      # 一致性校验 oracle
 │   │   ├── margin_target.py      # 目标成本反推（F-003）
 │   │   ├── material_sim.py       # 原料价格模拟（F-004）
 │   │   ├── prep_engine.py        # BOM 展开 + 缺口（F-006）
 │   │   ├── purchase_suggestion.py # 采购建议（F-007）
-│   │   ├── scenarios.py          # 组合评估 + 多场景（F-008/F-010）
-│   │   ├── optimizer.py          # 枚举优化器（F-012）
-│   │   └── capacity.py           # 产能估算（F-011）
-│   └── model/
-│       └── production.py         # 生产计划数据模型（F-005）
-├── tests/                        # pytest 测试（55 tests，smoke + golden）
+│   │   ├── material_mgmt.py      # 原料管理逻辑（Tab5）
+│   │   ├── recipe_mgmt.py        # 配方管理逻辑（Tab6）
+│   │   ├── serving_mgmt.py       # 出品规格逻辑（Tab7）
+│   │   ├── scenarios.py          # 组合评估
+│   │   ├── optimizer.py          # 枚举优化器
+│   │   └── capacity.py           # 产能估算
+│   ├── model/
+│   │   └── production.py         # 生产计划数据模型
+│   └── sync/
+│       └── excel_sync.py         # Excel → Supabase 同步
+├── tests/                        # pytest 测试（84+ tests）
 ├── data/                         # 放置蜜可诗产品库.xlsx
 ├── docs/
-│   └── E2E_TEST_PLAN.md         # 端到端测试计划
+│   └── E2E_TEST_PLAN.md          # 端到端测试计划
 └── requirements.txt
 ```
 
@@ -97,10 +156,12 @@ mike-product-calc/
 
 - **Python 3.9+**
 - **Streamlit** — Web UI
+- **Supabase (PostgreSQL)** — 数据存储（原料/配方/规格）
 - **pandas** — 数据处理
 - **numpy** — 向量计算
-- **scipy** — 优化算法（V2 扩展）
+- **scipy** — 优化算法
 - **openpyxl** — Excel 读取
+- **requests** — Supabase REST API
 
 ## 依赖列表
 
