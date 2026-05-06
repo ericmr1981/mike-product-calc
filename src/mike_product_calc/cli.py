@@ -60,6 +60,7 @@ from mike_product_calc.data.upload import (
     UploadRegistry,
     DuplicateFileError,
 )
+from mike_product_calc.data.cli_supabase import get_client
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -543,6 +544,131 @@ def cmd_purchase_suggest(args: argparse.Namespace) -> int:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
+# Supabase CRUD commands (agent-friendly)
+# ══════════════════════════════════════════════════════════════════════════════════
+
+def cmd_material_list(args: argparse.Namespace) -> int:
+    """List raw materials from Supabase."""
+    client = get_client()
+    materials = client.list_raw_materials()
+    if args.category:
+        materials = [m for m in materials if m.get("category") == args.category]
+    if args.status:
+        materials = [m for m in materials if m.get("status") == args.status]
+    rows = [{k: v for k, v in m.items() if not k.startswith("_")} for m in materials]
+    _dump_json({"cmd": "material-list", "count": len(rows), "rows": rows}, out=args.out)
+    return 0
+
+
+def cmd_material_get(args: argparse.Namespace) -> int:
+    """Get a single raw material by ID."""
+    client = get_client()
+    mat = client.get_raw_material(args.id)
+    if mat is None:
+        _dump_json({"cmd": "material-get", "error": "not_found", "id": args.id}, out=args.out)
+        return 1
+    _dump_json({"cmd": "material-get", "material": mat}, out=args.out)
+    return 0
+
+
+def cmd_material_create(args: argparse.Namespace) -> int:
+    """Create a raw material from a JSON file or inline JSON string."""
+    client = get_client()
+    data = _load_json_arg(args.data)
+    mat = client.create_raw_material(data)
+    _dump_json({"cmd": "material-create", "material": mat}, out=args.out)
+    return 0
+
+
+def cmd_material_update(args: argparse.Namespace) -> int:
+    """Update a raw material by ID."""
+    client = get_client()
+    data = _load_json_arg(args.data)
+    mat = client.update_raw_material(args.id, data)
+    _dump_json({"cmd": "material-update", "id": args.id, "material": mat}, out=args.out)
+    return 0
+
+
+def cmd_material_delete(args: argparse.Namespace) -> int:
+    """Delete a raw material by ID."""
+    client = get_client()
+    client.delete_raw_material(args.id)
+    _dump_json({"cmd": "material-delete", "id": args.id, "deleted": True}, out=args.out)
+    return 0
+
+
+def cmd_product_list(args: argparse.Namespace) -> int:
+    """List products from Supabase."""
+    client = get_client()
+    products = client.list_products(is_final=args.final_only or None)
+    rows = [{k: v for k, v in p.items() if not k.startswith("_")} for p in products]
+    _dump_json({"cmd": "product-list", "count": len(rows), "rows": rows}, out=args.out)
+    return 0
+
+
+def cmd_product_get(args: argparse.Namespace) -> int:
+    """Get a single product by ID."""
+    client = get_client()
+    prod = client.get_product(args.id)
+    if prod is None:
+        _dump_json({"cmd": "product-get", "error": "not_found", "id": args.id}, out=args.out)
+        return 1
+    _dump_json({"cmd": "product-get", "product": prod}, out=args.out)
+    return 0
+
+
+def cmd_recipe_list(args: argparse.Namespace) -> int:
+    """List recipes (BOM) for a product."""
+    client = get_client()
+    recipes = client.list_recipes(args.product_id)
+    _dump_json({"cmd": "recipe-list", "product_id": args.product_id, "count": len(recipes), "rows": recipes}, out=args.out)
+    return 0
+
+
+def cmd_recipe_set(args: argparse.Namespace) -> int:
+    """Replace all recipes for a product (from JSON)."""
+    client = get_client()
+    data = _load_json_arg(args.data)
+    result = client.set_recipes(args.product_id, data)
+    _dump_json({"cmd": "recipe-set", "product_id": args.product_id, "count": len(result)}, out=args.out)
+    return 0
+
+
+def cmd_spec_list(args: argparse.Namespace) -> int:
+    """List serving specs for a product."""
+    client = get_client()
+    specs = client.list_serving_specs(args.product_id)
+    _dump_json({"cmd": "spec-list", "product_id": args.product_id, "count": len(specs), "rows": specs}, out=args.out)
+    return 0
+
+
+def cmd_spec_set(args: argparse.Namespace) -> int:
+    """Replace all serving specs for a product (from JSON)."""
+    client = get_client()
+    data = _load_json_arg(args.data)
+    result = client.set_serving_specs(args.product_id, data)
+    _dump_json({"cmd": "spec-set", "product_id": args.product_id, "count": len(result)}, out=args.out)
+    return 0
+
+
+def _load_json_arg(data: str) -> dict | list:
+    """Load JSON from a file path or inline string."""
+    p = Path(data)
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            sys.stderr.write(f"Error: invalid JSON in file '{data}': {exc}\n")
+            raise SystemExit(1)
+    # Try inline JSON
+    try:
+        return json.loads(data)
+    except json.JSONDecodeError as exc:
+        sys.stderr.write(f"Error: invalid JSON (file not found nor valid inline): {data}\n  {exc}\n")
+        raise SystemExit(1)
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
 # Argument parser
 # ══════════════════════════════════════════════════════════════════════════════════
 
@@ -894,6 +1020,71 @@ def build_parser() -> argparse.ArgumentParser:
     fi = fm.add_parser("info", help="Show details of a registered file")
     fi.add_argument("--id", required=True, help="File ID (or prefix)")
     fi.add_argument("--out", help="Write JSON output to file")
+
+    # ── material ──────────────────────────────────────────────────────────────
+    mat = sub.add_parser("material", help="Raw material CRUD (Supabase)")
+    mat.set_defaults(func=lambda a: mat.print_help())
+    msub = mat.add_subparsers(dest="material_cmd")
+    ml = msub.add_parser("list", help="List raw materials")
+    ml.add_argument("--category", help="Filter by category")
+    ml.add_argument("--status", help="Filter by status")
+    ml.set_defaults(func=cmd_material_list)
+    mg = msub.add_parser("get", help="Get a raw material by ID")
+    mg.add_argument("id", help="Material UUID")
+    mg.set_defaults(func=cmd_material_get)
+    mc = msub.add_parser("create", help="Create a raw material from JSON")
+    mc.add_argument("data", help="JSON file path or inline JSON string")
+    mc.set_defaults(func=cmd_material_create)
+    mu = msub.add_parser("update", help="Update a raw material by ID from JSON")
+    mu.add_argument("id", help="Material UUID")
+    mu.add_argument("data", help="JSON file path or inline JSON")
+    mu.set_defaults(func=cmd_material_update)
+    md = msub.add_parser("delete", help="Delete a raw material by ID")
+    md.add_argument("id", help="Material UUID")
+    md.set_defaults(func=cmd_material_delete)
+    for _p in [ml, mg, mc, mu, md]:
+        _p.add_argument("--out", help="Write JSON output to file")
+
+    # ── product ───────────────────────────────────────────────────────────────
+    prod = sub.add_parser("product", help="Product CRUD (Supabase)")
+    prod.set_defaults(func=lambda a: prod.print_help())
+    psub = prod.add_subparsers(dest="product_cmd")
+    pl = psub.add_parser("list", help="List products")
+    pl.add_argument("--final-only", action="store_true", help="Only final products")
+    pl.set_defaults(func=cmd_product_list)
+    pg = psub.add_parser("get", help="Get a product by ID")
+    pg.add_argument("id", help="Product UUID")
+    pg.set_defaults(func=cmd_product_get)
+    for _p in [pl, pg]:
+        _p.add_argument("--out", help="Write JSON output to file")
+
+    # ── recipe ────────────────────────────────────────────────────────────────
+    rec = sub.add_parser("recipe", help="Recipe (BOM) management (Supabase)")
+    rec.set_defaults(func=lambda a: rec.print_help())
+    rsub = rec.add_subparsers(dest="recipe_cmd")
+    rl = rsub.add_parser("list", help="List recipes for a product")
+    rl.add_argument("product_id", help="Product UUID")
+    rl.set_defaults(func=cmd_recipe_list)
+    rs = rsub.add_parser("set", help="Replace all recipes for a product (from JSON)")
+    rs.add_argument("product_id", help="Product UUID")
+    rs.add_argument("data", help="JSON file path or inline JSON array")
+    rs.set_defaults(func=cmd_recipe_set)
+    for _p in [rl, rs]:
+        _p.add_argument("--out", help="Write JSON output to file")
+
+    # ── spec ──────────────────────────────────────────────────────────────────
+    spec = sub.add_parser("spec", help="Serving spec management (Supabase)")
+    spec.set_defaults(func=lambda a: spec.print_help())
+    ssub = spec.add_subparsers(dest="spec_cmd")
+    sl = ssub.add_parser("list", help="List serving specs for a product")
+    sl.add_argument("product_id", help="Product UUID")
+    sl.set_defaults(func=cmd_spec_list)
+    ss = ssub.add_parser("set", help="Replace all serving specs for a product (from JSON)")
+    ss.add_argument("product_id", help="Product UUID")
+    ss.add_argument("data", help="JSON file path or inline JSON array")
+    ss.set_defaults(func=cmd_spec_set)
+    for _p in [sl, ss]:
+        _p.add_argument("--out", help="Write JSON output to file")
 
     # ── state ─────────────────────────────────────────────────────────────────
     _add_state_subparser(sub)
