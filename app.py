@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sys
 import tempfile
+import os
 from datetime import date, datetime
 from pathlib import Path
 
@@ -74,19 +75,100 @@ st.set_page_config(page_title="mike-product-calc", layout="wide")
 # ── Mobile full-screen CSS ─────────────────────────────────────────────────
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
+    :root {
+        --bg-base: #f5f7fb;
+        --panel: #ffffff;
+        --panel-border: #dce3ef;
+        --text-strong: #1f2a37;
+        --text-muted: #607085;
+        --accent: #0f766e;
+        --accent-soft: #e6f4f2;
+        --shadow-soft: 0 10px 30px rgba(15, 23, 42, 0.06);
+    }
+
+    html, body, [class*="css"] {
+        font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    }
+
     /* Hide Streamlit chrome */
     #MainMenu {visibility: hidden;}
     .stAppDeployButton {display: none !important;}
     footer {display: none !important;}
     header {display: none !important;}
 
-    /* Viewport: full-screen, no scroll outside app */
-    .stApp {min-height: 100dvh;}
+    /* Viewport and background */
+    .stApp {
+        min-height: 100dvh;
+        background:
+            radial-gradient(circle at 10% 10%, #dff5ff 0%, rgba(223,245,255,0) 35%),
+            radial-gradient(circle at 90% 20%, #e9fff0 0%, rgba(233,255,240,0) 30%),
+            var(--bg-base);
+    }
+    .block-container {
+        padding-top: 0.8rem !important;
+        max-width: 1400px;
+    }
+
+    .hero-banner {
+        background: linear-gradient(135deg, #113b54 0%, #0f766e 100%);
+        color: #f7fbff;
+        padding: 18px 20px;
+        border-radius: 14px;
+        margin: 6px 0 14px 0;
+        box-shadow: var(--shadow-soft);
+    }
+    .hero-banner h2 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+    }
+    .hero-banner p {
+        margin: 6px 0 0 0;
+        color: #d9f4f2;
+        font-size: 13px;
+        line-height: 1.5;
+    }
 
     /* Reduce header top padding */
     .stHeadingContainer {padding-top: 0 !important; margin-top: 0 !important;}
     section[data-testid="stBlockContainer"] > div:first-child {padding-top: 0 !important;}
-    .block-container {padding-top: 0.5rem !important;}
+
+    /* Card-like containers */
+    div[data-testid="stVerticalBlockBorder"] {
+        border: 1px solid var(--panel-border) !important;
+        border-radius: 12px !important;
+        box-shadow: var(--shadow-soft);
+        background: var(--panel);
+    }
+
+    div[data-testid="metric-container"] {
+        border: 1px solid var(--panel-border);
+        border-radius: 12px;
+        background: var(--panel);
+        padding: 10px 14px;
+        box-shadow: var(--shadow-soft);
+    }
+    div[data-testid="metric-container"] label {
+        color: var(--text-muted) !important;
+        font-weight: 500;
+    }
+
+    /* Sidebar polish */
+    section[data-testid="stSidebar"] {
+        border-right: 1px solid var(--panel-border);
+        background: #f9fbff;
+    }
+    .sidebar-note {
+        font-size: 12px;
+        color: #5c6b7f;
+        line-height: 1.5;
+        padding: 10px 12px;
+        background: #edf5ff;
+        border: 1px solid #d6e6ff;
+        border-radius: 10px;
+    }
 
     /* Help tip hover card */
     .help-tip {position: relative; display: inline-flex; cursor: help; margin-left: 4px; vertical-align: middle;}
@@ -139,6 +221,8 @@ st.markdown("""
         h1 {font-size: 22px !important;}
         h2 {font-size: 18px !important;}
         h3 {font-size: 16px !important;}
+        .hero-banner h2 {font-size: 18px !important;}
+        .hero-banner p {font-size: 12px !important;}
 
         /* Tab bar: scrollable, no wrap */
         button[data-baseweb="tab"] {
@@ -181,8 +265,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("Gelato Miiix Data Foundation")
-st.caption("当前版本：Excel 解析 / 校验、SKU 毛利分析（双口径）、F-002 oracle、F-003 第一版反推定价。")
+st.title("Gelato Miiix Workplace")
+st.markdown(
+    """
+    <div class="hero-banner">
+      <h2>运营数据控制台</h2>
+      <p>统一查看原料、产品、配方与规格数据，并支持快速刷新缓存，减少重复操作等待。</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 def _heading_with_help(heading: str, help_text: str):
@@ -199,11 +291,41 @@ def _heading_with_help(heading: str, help_text: str):
 
 # ── Supabase 初始化 ─────────────────────────────────────────
 
+def _get_supabase_credentials() -> tuple[str, str]:
+    """Read Supabase credentials from Streamlit secrets, then env fallback."""
+    url = ""
+    key = ""
+
+    try:
+        url = st.secrets["supabase"]["url"]
+        key = st.secrets["supabase"]["service_key"]
+    except Exception:
+        url = os.environ.get("SUPABASE_URL", "")
+        key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+
+    if not url or not key:
+        raise RuntimeError(
+            "未找到 Supabase 凭据。请在 .streamlit/secrets.toml 中配置 [supabase] url/service_key，"
+            "或设置环境变量 SUPABASE_URL / SUPABASE_SERVICE_KEY。"
+        )
+
+    return url, key
+
+
+def _hydrate_cache(client) -> None:
+    """Load commonly used datasets into session cache."""
+    st.session_state.supabase = client
+    st.session_state.cached_raw_materials = client.list_raw_materials()
+    st.session_state.cached_products = client.list_products()
+    st.session_state.cached_all_recipes = client.list_all_recipes()
+    st.session_state.cached_all_specs = client.list_all_serving_specs()
+    st.session_state.cache_loaded_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 _st_supa = None
 _st_sheets: dict[str, pd.DataFrame] = {}
 try:
-    supabase_url = st.secrets["supabase"]["url"]
-    supabase_key = st.secrets["supabase"]["service_key"]
+    supabase_url, supabase_key = _get_supabase_credentials()
     from mike_product_calc.data.supabase_client import MpcSupabaseClient
     _st_supa = MpcSupabaseClient(supabase_url, supabase_key)
     from mike_product_calc.data.supabase_adapter import build_sheets
@@ -221,11 +343,31 @@ except Exception as _e:
 
 # Track supabase client and cached data in session state
 if "supabase" not in st.session_state:
-    st.session_state.supabase = _st_supa
-    st.session_state.cached_raw_materials = _st_supa.list_raw_materials()
-    st.session_state.cached_products = _st_supa.list_products()
-    st.session_state.cached_all_recipes = _st_supa.list_all_recipes()
-    st.session_state.cached_all_specs = _st_supa.list_all_serving_specs()
+    _hydrate_cache(_st_supa)
+
+with st.sidebar:
+    st.subheader("操作中心")
+    st.caption("更快地查看当前数据状态并执行常用刷新操作。")
+    if st.button("刷新 Supabase 缓存", width="stretch"):
+        with st.spinner("正在刷新缓存..."):
+            st.cache_data.clear()
+            _hydrate_cache(st.session_state.supabase)
+        st.success("缓存已刷新")
+        st.rerun()
+
+    st.markdown("#### 当前状态")
+    st.metric("原料数", len(st.session_state.cached_raw_materials))
+    st.metric("产品数", len(st.session_state.cached_products))
+    st.metric("规格数", len(st.session_state.cached_all_specs))
+    st.caption(f"最近加载时间：{st.session_state.get('cache_loaded_at', 'N/A')}")
+    st.markdown(
+        """
+        <div class="sidebar-note">
+          建议先在“概览/校验”查看统计，再进入“原料管理/配方管理/出品规格”执行修改。
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _full_name(p: dict) -> str:
@@ -344,11 +486,23 @@ with tab3:
 
     # SKU selector — key includes product name so it resets on product change
     sku_options = display_t4["product_key"].tolist()
+    _sku_widget_key = f"sku_sel_{selected_product}"
+    _default_sku = next(
+        (pk for pk in sku_options if isinstance(pk, str) and pk.endswith("|小杯")),
+        sku_options[0] if sku_options else "",
+    )
+    if _sku_widget_key not in st.session_state and _default_sku:
+        st.session_state[_sku_widget_key] = _default_sku
+    _default_sku_idx = next(
+        (i for i, pk in enumerate(sku_options) if isinstance(pk, str) and pk.endswith("|小杯")),
+        0,
+    )
     selected_sku = st.selectbox(
         "选择 SKU 查看配方",
         options=sku_options,
         format_func=lambda pk: pk.split("|")[-1] if "|" in pk else pk,
-        key=f"sku_sel_{selected_product}",
+        key=_sku_widget_key,
+        index=_default_sku_idx,
     )
 
     # Show the basic SKU table
@@ -1048,13 +1202,44 @@ with tab5:
     # ── Filters (from cache) ──
     _rm_cache = st.session_state.cached_raw_materials
     _categories = ["全部"] + sorted({m["category"] for m in _rm_cache if m.get("category")})
-    col_f1, col_f2 = st.columns(2)
-    with col_f1:
-        filter_cat = st.selectbox("类别过滤", options=_categories, key="tab5_cat")
-    with col_f2:
-        filter_status = st.selectbox("状态", options=["全部", "上线", "下线"], key="tab5_status")
+    _status_options = ["全部", "上线", "下线"]
+    if "tab5_filter_cat_applied" not in st.session_state:
+        st.session_state["tab5_filter_cat_applied"] = "全部"
+    if "tab5_filter_status_applied" not in st.session_state:
+        st.session_state["tab5_filter_status_applied"] = "全部"
+    if "tab5_filter_search_applied" not in st.session_state:
+        st.session_state["tab5_filter_search_applied"] = ""
 
-    search_term = st.text_input("搜索", placeholder="输入原料名称...", key="tab5_search")
+    col_f1, col_f2 = st.columns(2)
+    with st.form("tab5_filter_form", clear_on_submit=False):
+        with col_f1:
+            filter_cat_input = st.selectbox(
+                "类别过滤",
+                options=_categories,
+                index=_categories.index(st.session_state["tab5_filter_cat_applied"])
+                if st.session_state["tab5_filter_cat_applied"] in _categories else 0,
+            )
+        with col_f2:
+            filter_status_input = st.selectbox(
+                "状态",
+                options=_status_options,
+                index=_status_options.index(st.session_state["tab5_filter_status_applied"])
+                if st.session_state["tab5_filter_status_applied"] in _status_options else 0,
+            )
+
+        search_term_input = st.text_input(
+            "搜索",
+            value=st.session_state["tab5_filter_search_applied"],
+            placeholder="输入原料名称...",
+        )
+        if st.form_submit_button("应用筛选", use_container_width=True):
+            st.session_state["tab5_filter_cat_applied"] = filter_cat_input
+            st.session_state["tab5_filter_status_applied"] = filter_status_input
+            st.session_state["tab5_filter_search_applied"] = search_term_input
+
+    filter_cat = st.session_state["tab5_filter_cat_applied"]
+    filter_status = st.session_state["tab5_filter_status_applied"]
+    search_term = st.session_state["tab5_filter_search_applied"]
 
     # ── Material list (filter from cache) ──
     all_materials = _rm_cache
@@ -1314,8 +1499,6 @@ with tab6:
                 st.cache_data.clear()
                 st.rerun()
 
-        st.divider()
-
         # ── Recipe BOM editor ──
         st.subheader("配方明细 (BOM)")
 
@@ -1389,10 +1572,8 @@ with tab6:
         else:
             st.info("暂无配方明细数据。")
 
-        st.markdown("---")
-
         # ── Add ingredient form ──
-        with st.expander("➕ 添加配料", expanded=True):
+        with st.expander("➕ 添加配料", expanded=False):
             with st.form("add_ingredient_form"):
                 src_type = st.radio("配料来源", options=["原料", "半成品"], horizontal=True)
 
@@ -1770,4 +1951,3 @@ with tab7:
                     st.success(f"已新增规格: {new_spec_name}")
                     st.cache_data.clear()
                     st.rerun()
-
