@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import pandas as pd
+import requests
 
-from mike_product_calc.ui.inventory_tab import apply_inventory_filters, shape_inventory_table
+from mike_product_calc.ui.inventory_tab import (
+    _is_http_404,
+    apply_inventory_filters,
+    shape_inventory_table,
+)
 
 
 def test_shape_inventory_table_adds_status_column() -> None:
@@ -113,3 +118,11 @@ def test_apply_inventory_filters_noop_for_all_filters_and_empty_keyword() -> Non
     out = apply_inventory_filters(df, status="全部", keyword="   ", warehouse_code="全部")
 
     assert out["item_code"].tolist() == ["A", "B"]
+
+
+def test_is_http_404_detects_requests_http_error() -> None:
+    response = requests.Response()
+    response.status_code = 404
+    err = requests.HTTPError("not found")
+    err.response = response
+    assert _is_http_404(err) is True

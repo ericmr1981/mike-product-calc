@@ -124,6 +124,8 @@ mpc inventory sync /path/to/dir --pattern "仓库库存导出*.xlsx" --dry-run
   - 低库存：`0 < available_qty <= 5`（阈值可在页面调节）
   - 异常：`is_negative_stock = true` 或 `has_amount_mismatch = true`
 - 支持筛选：仓库、状态、关键字（编码/名称）
+  - 仓库下拉显示中文仓库名（内部按仓库编码精确过滤）
+  - 筛选采用“应用筛选”触发，避免切换时频繁整页刷新
 - 快照时效：超过 2 小时未更新会告警
 
 ## 验证

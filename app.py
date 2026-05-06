@@ -397,6 +397,12 @@ def _full_name(p: dict) -> str:
     return f"{p['name']} {v}".strip() if v else p["name"]
 
 
+@st.fragment
+def _render_inventory_fragment(client) -> None:
+    """Render inventory tab in a fragment to avoid full-app reruns on filter submit."""
+    render_inventory_tab(client)
+
+
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理", "配方管理", "出品规格", "门店库存"])
 
 with tab1:
@@ -1974,4 +1980,4 @@ with tab7:
 
 # ── Tab8: 门店库存 ──────────────────────────────────────────
 with tab8:
-    render_inventory_tab(_st_supa)
+    _render_inventory_fragment(_st_supa)
