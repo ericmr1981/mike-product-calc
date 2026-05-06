@@ -108,3 +108,43 @@ def test_list_serving_specs(client):
         mock_get.return_value.json.return_value = mock_data
         result = client.list_serving_specs("p1")
         assert result == mock_data
+
+
+def test_find_inventory_batch_by_filename(client):
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = [{"id": "b1", "source_filename": "f.xlsx"}]
+        row = client.find_inventory_batch(source_filename="f.xlsx", source_file_sha256="abc")
+        assert row["id"] == "b1"
+        assert mock_get.call_count == 1
+
+
+def test_find_inventory_batch_fallback_sha(client):
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.side_effect = [[], [{"id": "b2", "source_file_sha256": "abc"}]]
+        row = client.find_inventory_batch(source_filename="f.xlsx", source_file_sha256="abc")
+        assert row["id"] == "b2"
+        assert mock_get.call_count == 2
+
+
+def test_create_and_update_inventory_batch(client):
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = [{"id": "b3"}]
+        out = client.create_inventory_batch({"source_filename": "f.xlsx"})
+        assert out["id"] == "b3"
+
+    with patch("requests.patch") as mock_patch:
+        mock_patch.return_value.status_code = 200
+        mock_patch.return_value.json.return_value = [{"id": "b3", "status": "imported"}]
+        out = client.update_inventory_batch("b3", {"status": "imported"})
+        assert out["status"] == "imported"
+
+
+def test_insert_inventory_items(client):
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = [{"id": "i1"}, {"id": "i2"}]
+        out = client.insert_inventory_items([{"item_code": "A"}, {"item_code": "B"}])
+        assert len(out) == 2

@@ -13,6 +13,7 @@
 | F-005 | Tab5 原料管理 | 原料 CRUD（新增/修改/删除）+ Excel 批量同步 | Supabase |
 | F-006 | Tab6 配方管理 | 产品配方 BOM 编辑（引用原料/半成品）| Supabase |
 | F-007 | Tab7 出品规格 | 出品规格配置（多规格/包材/附加配料）| Supabase |
+| F-008 | Inventory Snapshot | 仓库库存导出 xlsx 定时上传、快照留存、异常标记 | Supabase |
 
 ## 环境要求
 
@@ -63,7 +64,13 @@ export SUPABASE_URL="https://xxx.supabase.co"
 export SUPABASE_SERVICE_KEY="sb_secret_xxx"
 ```
 
-## Agent CLI（原料/配方/规格管理）
+首次启用库存快照同步前，请先在 Supabase SQL Editor 执行：
+
+```sql
+-- 将 docs/superpowers/specs/supabase_schema.sql 内容复制到 SQL Editor 后执行
+```
+
+## Agent CLI（原料/配方/规格/库存快照）
 
 安装后可直接在终端使用，输出纯 JSON，适合 AI Agent 调用：
 
@@ -91,7 +98,22 @@ mpc recipe set <product-uuid> recipes.json  # 替换配方
 # 出品规格管理
 mpc spec list <product-uuid>         # 查看出品规格
 mpc spec set <product-uuid> specs.json     # 替换出品规格
+
+# 库存快照同步（单文件）
+mpc inventory sync "/path/to/仓库库存导出2026年05月06日20时20分44秒.xlsx"
+
+# 库存快照同步（目录批量）
+mpc inventory sync /path/to/dir --pattern "仓库库存导出*.xlsx"
+
+# 仅校验不写入
+mpc inventory sync /path/to/dir --pattern "仓库库存导出*.xlsx" --dry-run
 ```
+
+可选参数：
+- `--archive-dir <dir>` 成功后移动文件到归档目录
+- `--max-files <n>` 限制本次处理文件数
+- `--sheet <name>` 指定 sheet（默认 `仓库库存导出`）
+- `--timezone <tz>` 文件名时间解析时区（默认 `Asia/Shanghai`）
 
 ## 验证
 
@@ -108,6 +130,7 @@ mpc material --help
 mpc product --help
 mpc recipe --help
 mpc spec --help
+mpc inventory --help
 ```
 
 ## 项目结构
@@ -121,6 +144,7 @@ mike-product-calc/
 │   ├── data/
 │   │   ├── supabase_client.py    # Supabase REST API 客户端
 │   │   ├── cli_supabase.py       # CLI Supabase 连接（env → secrets）
+│   │   ├── inventory_upload.py   # 仓库库存快照导入与校验
 │   │   ├── supabase_adapter.py   # Supabase → DataFrame 适配
 │   │   ├── loader.py             # Excel 加载 + sheet 匹配
 │   │   ├── validator.py          # 校验规则 + ValidationReport
