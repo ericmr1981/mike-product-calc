@@ -170,6 +170,15 @@ st.markdown("""
         border-radius: 10px;
     }
 
+    /* Spec icon actions */
+    div[class*="st-key-spec-actions-"] button {
+        min-height: 32px !important;
+        padding: 4px 10px !important;
+        font-size: 16px !important;
+        line-height: 1 !important;
+        border-radius: 10px !important;
+    }
+
     /* Help tip hover card */
     .help-tip {position: relative; display: inline-flex; cursor: help; margin-left: 4px; vertical-align: middle;}
     .help-icon {font-size: 18px; color: #888;}
@@ -223,6 +232,17 @@ st.markdown("""
         h3 {font-size: 16px !important;}
         .hero-banner h2 {font-size: 18px !important;}
         .hero-banner p {font-size: 12px !important;}
+
+        div[class*="st-key-spec-actions-"] {
+            justify-content: flex-end !important;
+            gap: 8px !important;
+        }
+        div[class*="st-key-spec-actions-"] button {
+            min-height: 30px !important;
+            min-width: 36px !important;
+            padding: 4px 8px !important;
+            font-size: 15px !important;
+        }
 
         /* Tab bar: scrollable, no wrap */
         button[data-baseweb="tab"] {
@@ -1711,28 +1731,27 @@ with tab7:
                 pkg_names.extend(pkg_topping_names)
 
                 with st.container(border=True):
-                    col_s1, col_s2 = st.columns([2, 1])
-                    with col_s1:
-                        _price = s.get("product_price")
-                        if _price is not None:
-                            try:
-                                _price_display = " — ¥" + "{:.2f}".format(float(_price))
-                            except (TypeError, ValueError):
-                                _price_display = ""
-                        else:
+                    _price = s.get("product_price")
+                    if _price is not None:
+                        try:
+                            _price_display = " — ¥" + "{:.2f}".format(float(_price))
+                        except (TypeError, ValueError):
                             _price_display = ""
-                        st.markdown("**" + s["spec_name"] + "**" + _price_display)
-                        if main_mat_name:
-                            st.caption(f"主原料: {main_mat_name} × {s.get('quantity', '')} 克")
-                        if pkg_names:
-                            st.caption(f"包材: {', '.join(pkg_names)}")
-                        if reg_topping_names:
-                            st.caption(f"附加配料: {', '.join(reg_topping_names)}")
-                    with col_s2:
-                        if st.button("✏️ 编辑", key=f"edit_{s['id']}", use_container_width=True):
+                    else:
+                        _price_display = ""
+                    st.markdown("**" + s["spec_name"] + "**" + _price_display)
+                    if main_mat_name:
+                        st.caption(f"主原料: {main_mat_name} × {s.get('quantity', '')} 克")
+                    if pkg_names:
+                        st.caption(f"包材: {', '.join(pkg_names)}")
+                    if reg_topping_names:
+                        st.caption(f"附加配料: {', '.join(reg_topping_names)}")
+
+                    with st.container(horizontal=True, horizontal_alignment="right", key=f"spec-actions-{s['id']}"):
+                        if st.button("✏️", key=f"edit_{s['id']}", help="编辑规格"):
                             st.session_state["_editing_spec"] = s["id"]
                             st.rerun()
-                        if st.button("🗑️ 删除", key=f"del_{s['id']}", use_container_width=True):
+                        if st.button("🗑️", key=f"del_{s['id']}", help="删除规格"):
                             remaining = [sp for sp in specs if sp["id"] != s["id"]]
                             normalized = [_normalize_spec_payload(sp) for sp in remaining]
                             client.set_serving_specs(sel_prod_id, normalized)
