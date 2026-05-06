@@ -82,6 +82,7 @@ mpc material delete <uuid>           # 删除
 mpc product list                     # 列出所有产品
 mpc product list --final-only        # 只列最终成品
 mpc product get <uuid>               # 查看单个产品
+mpc product compute-costs <uuid>     # 从配方重新计算产品成本（新增/修改配方后执行）
 
 # 配方管理
 mpc recipe list <product-uuid>       # 查看配方明细

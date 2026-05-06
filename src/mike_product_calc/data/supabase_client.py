@@ -258,6 +258,67 @@ class MpcSupabaseClient:
         return resp.json()
 
     # ------------------------------------------------------------------
+    # Cost computation
+    # ------------------------------------------------------------------
+
+    def compute_product_costs(self, product_id: str, _visited: set | None = None) -> dict:
+        """Compute and update factory_cost / store_cost / batch_size for a product.
+
+        Recursively resolves semi-product (ref_product_id) ingredients.
+        Returns the update payload written to Supabase.
+        """
+        if _visited is None:
+            _visited = set()
+        if product_id in _visited:
+            return {}  # circular reference guard
+        _visited.add(product_id)
+
+        # Load product details
+        recipes = self.list_recipes(product_id)
+        if not recipes:
+            return {}
+
+        total_factory = 0.0
+        total_store = 0.0
+        total_batch_size = 0.0
+
+        for r in recipes:
+            qty = float(r.get("quantity", 0) or 0)
+            total_batch_size += qty
+            source = r.get("ingredient_source", "raw")
+
+            if source == "raw":
+                # Direct raw material
+                rm = r.get("raw_material_id")
+                if isinstance(rm, dict):
+                    bp = float(rm.get("base_price") or 0)
+                    fp = float(rm.get("final_price") or 0)
+                    ua = float(rm.get("unit_amount") or 1)
+                    if ua <= 0:
+                        ua = 1
+                    total_factory += bp / ua * qty
+                    total_store += fp / ua * qty
+            else:
+                # Semi-product ingredient - recurse
+                ref = r.get("ref_product_id")
+                ref_id = ref.get("id") if isinstance(ref, dict) else str(ref or "")
+                if ref_id and ref_id not in _visited:
+                    sub = self.compute_product_costs(ref_id, _visited)
+                    sq = float(sub.get("batch_size", 0) or 0)
+                    if sq > 0:
+                        total_factory += float(sub.get("factory_cost", 0) or 0) / sq * qty
+                        total_store += float(sub.get("store_cost", 0) or 0) / sq * qty
+
+        update = {
+            "computed_batch_size": round(total_batch_size, 4),
+            "computed_factory_cost": round(total_factory, 4),
+            "computed_store_cost": round(total_store, 4),
+        }
+        self.update_product(product_id, update)
+
+        return update
+
+    # ------------------------------------------------------------------
     # Sync Log
     # ------------------------------------------------------------------
 

@@ -597,6 +597,14 @@ def cmd_material_delete(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_product_compute_costs(args: argparse.Namespace) -> int:
+    """Compute and update factory/store costs for a product (and its semi-product dependencies)."""
+    client = get_client()
+    result = client.compute_product_costs(args.id)
+    _dump_json({"cmd": "product-compute-costs", "id": args.id, "result": result}, out=args.out)
+    return 0
+
+
 def cmd_product_list(args: argparse.Namespace) -> int:
     """List products from Supabase."""
     client = get_client()
@@ -1055,7 +1063,10 @@ def build_parser() -> argparse.ArgumentParser:
     pg = psub.add_parser("get", help="Get a product by ID")
     pg.add_argument("id", help="Product UUID")
     pg.set_defaults(func=cmd_product_get)
-    for _p in [pl, pg]:
+    pc = psub.add_parser("compute-costs", help="Compute factory/store costs from recipes")
+    pc.add_argument("id", help="Product UUID")
+    pc.set_defaults(func=cmd_product_compute_costs)
+    for _p in [pl, pg, pc]:
         _p.add_argument("--out", help="Write JSON output to file")
 
     # ── recipe ────────────────────────────────────────────────────────────────
