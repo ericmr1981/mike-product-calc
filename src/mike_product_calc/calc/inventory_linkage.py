@@ -26,6 +26,29 @@ def _empty_plan() -> pd.DataFrame:
     return pd.DataFrame(columns=_PLAN_COLUMNS)
 
 
+def _resolve_available_qty(material: str, inv_exact: pd.DataFrame) -> float:
+    """Resolve available qty by exact match first, then unique prefix match.
+
+    Why:
+    - BOM material names may be shorter aliases (e.g. ``原味奶浆``),
+      while inventory names include full code suffix (e.g. ``原味奶浆JYX001``).
+    - We only apply fuzzy fallback when the candidate is unique, to avoid
+      accidental mismatches when multiple inventory names share the prefix.
+    """
+    m = str(material or "").strip()
+    if not m:
+        return 0.0
+
+    exact = inv_exact[inv_exact["material"] == m]
+    if not exact.empty:
+        return float(exact["available_qty"].sum())
+
+    starts = inv_exact[inv_exact["material"].astype(str).str.startswith(m, na=False)]
+    if len(starts) == 1:
+        return float(starts["available_qty"].iloc[0])
+    return 0.0
+
+
 def build_replenishment_plan(bom_df: pd.DataFrame, inv_df: pd.DataFrame) -> pd.DataFrame:
     if bom_df is None or bom_df.empty:
         return _empty_plan()
@@ -52,7 +75,7 @@ def build_replenishment_plan(bom_df: pd.DataFrame, inv_df: pd.DataFrame) -> pd.D
     bom["unit"] = bom["unit"].fillna("").astype(str)
 
     if inv_df is None or inv_df.empty:
-        inv = pd.DataFrame(columns=["material", "available_qty", "inv_unit"])
+        inv = pd.DataFrame(columns=["material", "available_qty", "unit"])
     else:
         inv = inv_df.copy()
         if "material" not in inv.columns:
@@ -72,16 +95,10 @@ def build_replenishment_plan(bom_df: pd.DataFrame, inv_df: pd.DataFrame) -> pd.D
             inv.sort_values(["material", "unit"], kind="stable")
             .groupby("material", as_index=False)
             .agg({"available_qty": "sum", "unit": "first"})
-            .rename(columns={"unit": "inv_unit"})
         )
 
-    out = bom[["material", "demand_qty", "unit"]].merge(
-        inv[["material", "available_qty", "inv_unit"]],
-        on="material",
-        how="left",
-    )
-    out["available_qty"] = _to_float_series(out["available_qty"])
-    out["unit"] = out["unit"].mask(out["unit"] == "", out["inv_unit"].fillna(""))
+    out = bom[["material", "demand_qty", "unit"]].copy()
+    out["available_qty"] = out["material"].apply(lambda m: _resolve_available_qty(m, inv))
 
     out["shortage_qty"] = (out["demand_qty"] - out["available_qty"]).clip(lower=0.0)
     out["suggested_replenish_qty"] = out["shortage_qty"]

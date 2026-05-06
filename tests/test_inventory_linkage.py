@@ -63,3 +63,21 @@ def test_summarize_shortage_alert_counts_shortage_items():
     summary = summarize_shortage_alert(plan)
     assert summary["shortage_items"] == 1
     assert summary["total_shortage_qty"] == 5.0
+
+
+def test_build_replenishment_plan_fallback_unique_prefix_match():
+    bom = pd.DataFrame(
+        [
+            {"material": "原味奶浆", "total_purchase_qty": 12.0, "purchase_unit": "袋"},
+        ]
+    )
+    inv = pd.DataFrame(
+        [
+            {"item_name": "原味奶浆JYX001", "available_qty": 10.0, "unit": "袋", "warehouse_code": "GM002"},
+        ]
+    )
+
+    out = build_replenishment_plan(bom, inv)
+    row = out.iloc[0]
+    assert row["available_qty"] == 10.0
+    assert row["shortage_qty"] == 2.0

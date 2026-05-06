@@ -136,6 +136,9 @@ mpc inventory sync /path/to/dir --pattern "仓库库存导出*.xlsx" --dry-run
 - 关键公式：
   - `缺口量 = max(0, BOM需求量 - 当前可用量)`
   - `建议补货量 = 缺口量`
+- 物料匹配规则：
+  - 优先全名精确匹配（`material == item_name`）
+  - 若未命中，尝试“唯一前缀匹配”（如 `原味奶浆` → `原味奶浆JYX001`）
 
 ## 验证
 
@@ -159,7 +162,7 @@ mpc inventory --help
 
 ```
 mike-product-calc/
-├── app.py                        # Streamlit Web UI（7 个 Tab）
+├── app.py                        # Streamlit Web UI（8 个 Tab）
 ├── src/mike_product_calc/
 │   ├── cli.py                    # CLI 入口（mpc 命令）
 │   ├── state.py                  # Session state 管理
@@ -179,6 +182,7 @@ mike-product-calc/
 │   │   ├── material_sim.py       # 原料价格模拟（F-004）
 │   │   ├── prep_engine.py        # BOM 展开 + 缺口（F-006）
 │   │   ├── purchase_suggestion.py # 采购建议（F-007）
+│   │   ├── inventory_linkage.py  # 产销与库存联动补货计算
 │   │   ├── material_mgmt.py      # 原料管理逻辑（Tab5）
 │   │   ├── recipe_mgmt.py        # 配方管理逻辑（Tab6）
 │   │   ├── serving_mgmt.py       # 出品规格逻辑（Tab7）
