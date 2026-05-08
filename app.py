@@ -38,7 +38,12 @@ from mike_product_calc.calc.recipe_mgmt import get_product_with_recipes, build_i
 from mike_product_calc.calc.serving_mgmt import get_final_products
 from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.model.production import ProductionRow
-from mike_product_calc.sync.excel_sync import preview_sync_raw_materials, execute_sync_raw_materials
+from mike_product_calc.sync.excel_sync import (
+    preview_sync_raw_materials,
+    execute_sync_raw_materials,
+    preview_sync_raw_materials_two_files,
+    execute_sync_raw_materials_two_files,
+)
 from mike_product_calc.ui.inventory_tab import render_inventory_tab
 
 # ── Constants ───────────────────────────────────────────────────────────────
@@ -1559,21 +1564,31 @@ with tab5:
 
     # ── 独立上传接口 ──
     with st.expander("📤 上传原料表（Excel）", expanded=False):
-        st.caption("上传包含总原料成本表的 Excel 文件。上传后预览差异再确认同步。")
-        uploaded_raw = st.file_uploader("选择 Excel 文件", type=["xlsx"], key="raw_xlsx_upload")
-        if uploaded_raw is not None:
-            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
-                tmp.write(uploaded_raw.getvalue())
-                tmp_path = tmp.name
-            raw_wb = load_workbook(Path(tmp_path))
-            diffs = preview_sync_raw_materials(raw_wb.sheets, client)
+        st.caption("按两部分上传：品项导出 + 加价规则导出。系统将按品项编码合并后同步。")
+        uploaded_items = st.file_uploader("上传品项导出文件", type=["xlsx"], key="raw_items_xlsx_upload")
+        uploaded_markup = st.file_uploader("上传加价规则文件", type=["xlsx"], key="raw_markup_xlsx_upload")
+        if uploaded_items is not None and uploaded_markup is not None:
+            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp_items:
+                tmp_items.write(uploaded_items.getvalue())
+                items_path = tmp_items.name
+            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp_markup:
+                tmp_markup.write(uploaded_markup.getvalue())
+                markup_path = tmp_markup.name
+            items_wb = load_workbook(Path(items_path))
+            markup_wb = load_workbook(Path(markup_path))
+            diffs = preview_sync_raw_materials_two_files(items_wb.sheets, markup_wb.sheets, client)
             df_diff = pd.DataFrame(diffs)
             st.dataframe(df_diff, use_container_width=True, hide_index=True)
             if st.button("确认执行同步", key="sync_upload"):
-                result = execute_sync_raw_materials(raw_wb.sheets, client)
-                st.success(f"同步完成: 新增 {result.inserts}, 更新 {result.updates}")
+                result = execute_sync_raw_materials_two_files(items_wb.sheets, markup_wb.sheets, client)
+                skip_count = sum(1 for d in diffs if d.get("action") == "skip")
+                st.success(
+                    f"同步完成: 新增 {result.inserts}, 更新 {result.updates}, 跳过 {skip_count}"
+                )
                 st.cache_data.clear()
                 st.rerun()
+        elif uploaded_items is not None or uploaded_markup is not None:
+            st.info("请同时上传“品项导出”和“加价规则导出”两个文件后再预览同步。")
 
     # ── Filters (from cache) ──
     _rm_cache = st.session_state.cached_raw_materials
