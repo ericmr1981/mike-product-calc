@@ -38,18 +38,34 @@ from mike_product_calc.calc.recipe_mgmt import get_product_with_recipes, build_i
 from mike_product_calc.calc.serving_mgmt import get_final_products
 from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.model.production import ProductionRow
-from mike_product_calc.sync.excel_sync import (
-    preview_sync_raw_materials,
-    execute_sync_raw_materials,
-    preview_sync_raw_materials_two_files,
-    execute_sync_raw_materials_two_files,
-)
+from mike_product_calc.sync import excel_sync as _excel_sync
 from mike_product_calc.ui.inventory_tab import render_inventory_tab
 
 # ── Constants ───────────────────────────────────────────────────────────────
 STATUS_ACTIVE = "上线"
 STATUS_INACTIVE = "下线"
 CATEGORY_PACKAGING = "包材"
+
+preview_sync_raw_materials = _excel_sync.preview_sync_raw_materials
+execute_sync_raw_materials = _excel_sync.execute_sync_raw_materials
+preview_sync_raw_materials_two_files = getattr(_excel_sync, "preview_sync_raw_materials_two_files", None)
+execute_sync_raw_materials_two_files = getattr(_excel_sync, "execute_sync_raw_materials_two_files", None)
+
+
+def _preview_sync_raw_materials_compat(item_sheets, markup_sheets, client):
+    if callable(preview_sync_raw_materials_two_files):
+        return preview_sync_raw_materials_two_files(item_sheets, markup_sheets, client)
+    merged = dict(item_sheets)
+    merged.update(markup_sheets)
+    return preview_sync_raw_materials(merged, client)
+
+
+def _execute_sync_raw_materials_compat(item_sheets, markup_sheets, client):
+    if callable(execute_sync_raw_materials_two_files):
+        return execute_sync_raw_materials_two_files(item_sheets, markup_sheets, client)
+    merged = dict(item_sheets)
+    merged.update(markup_sheets)
+    return execute_sync_raw_materials(merged, client)
 
 
 def _extract_id(val):
@@ -1576,11 +1592,11 @@ with tab5:
                 markup_path = tmp_markup.name
             items_wb = load_workbook(Path(items_path))
             markup_wb = load_workbook(Path(markup_path))
-            diffs = preview_sync_raw_materials_two_files(items_wb.sheets, markup_wb.sheets, client)
+            diffs = _preview_sync_raw_materials_compat(items_wb.sheets, markup_wb.sheets, client)
             df_diff = pd.DataFrame(diffs)
             st.dataframe(df_diff, use_container_width=True, hide_index=True)
             if st.button("确认执行同步", key="sync_upload"):
-                result = execute_sync_raw_materials_two_files(items_wb.sheets, markup_wb.sheets, client)
+                result = _execute_sync_raw_materials_compat(items_wb.sheets, markup_wb.sheets, client)
                 skip_count = sum(1 for d in diffs if d.get("action") == "skip")
                 st.success(
                     f"同步完成: 新增 {result.inserts}, 更新 {result.updates}, 跳过 {skip_count}"
