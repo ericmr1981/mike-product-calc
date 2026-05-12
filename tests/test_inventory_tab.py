@@ -126,3 +126,57 @@ def test_is_http_404_detects_requests_http_error() -> None:
     err = requests.HTTPError("not found")
     err.response = response
     assert _is_http_404(err) is True
+
+
+def test_shape_inventory_table_adds_safety_columns() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "item_code": "SKU-1",
+                "available_qty": 0,
+                "is_negative_stock": False,
+                "has_amount_mismatch": False,
+            },
+            {
+                "item_code": "SKU-2",
+                "available_qty": 3,
+                "is_negative_stock": False,
+                "has_amount_mismatch": False,
+            },
+        ]
+    )
+    safety_map = {"SKU-1": 10.0, "SKU-2": 5.0}
+    out = shape_inventory_table(df, reorder_point=5, safety_stock_map=safety_map)
+
+    assert "safety_stock" in out.columns
+    assert "safety_status" in out.columns
+    assert out.loc[out["item_code"] == "SKU-1", "safety_stock"].iloc[0] == 10.0
+    assert out.loc[out["item_code"] == "SKU-2", "safety_stock"].iloc[0] == 5.0
+    assert out.loc[out["item_code"] == "SKU-1", "safety_status"].iloc[0] == "zero_stock"
+    assert out.loc[out["item_code"] == "SKU-2", "safety_status"].iloc[0] == "below_safety"
+
+
+def test_apply_inventory_filters_safety_status_zero_stock() -> None:
+    df = pd.DataFrame(
+        [
+            {"item_code": "A", "inventory_status": "正常", "warehouse_code": "GM001", "safety_status": "zero_stock"},
+            {"item_code": "B", "inventory_status": "正常", "warehouse_code": "GM001", "safety_status": "below_safety"},
+            {"item_code": "C", "inventory_status": "正常", "warehouse_code": "GM001", "safety_status": "normal"},
+        ]
+    )
+    out = apply_inventory_filters(df, status="全部", keyword="", warehouse_code="全部", safety_status="零库存")
+    assert len(out) == 1
+    assert out.iloc[0]["item_code"] == "A"
+
+
+def test_apply_inventory_filters_safety_status_below_safety() -> None:
+    df = pd.DataFrame(
+        [
+            {"item_code": "A", "inventory_status": "正常", "warehouse_code": "GM001", "safety_status": "zero_stock"},
+            {"item_code": "B", "inventory_status": "正常", "warehouse_code": "GM001", "safety_status": "below_safety"},
+            {"item_code": "C", "inventory_status": "正常", "warehouse_code": "GM001", "safety_status": "normal"},
+        ]
+    )
+    out = apply_inventory_filters(df, status="全部", keyword="", warehouse_code="全部", safety_status="低于安全库存")
+    assert len(out) == 1
+    assert out.iloc[0]["item_code"] == "B"
