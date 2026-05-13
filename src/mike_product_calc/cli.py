@@ -53,6 +53,10 @@ from mike_product_calc.calc.profit_oracle import (
     render_profit_oracle_markdown,
     sku_profit_consistency_table,
 )
+from mike_product_calc.calc.coverage_analysis import (
+    build_coverage_matrix,
+    compute_coverage,
+)
 from mike_product_calc.calc.purchase_suggestion import build_purchase_list
 from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.data.validator import issues_to_dataframe, issues_to_report, validate_workbook
@@ -544,6 +548,94 @@ def cmd_purchase_suggest(args: argparse.Namespace) -> int:
                "count": int(len(purchase_df)), "rows": purchase_df[cols].to_dict(orient="records")}
     if args.out and args.out.endswith(".csv"):
         _dump_csv(purchase_df[cols], out=args.out)
+        return 0
+    _dump_json(payload, out=args.out)
+    return 0
+
+
+def cmd_coverage_estimate(args: argparse.Namespace) -> int:
+    """Coverage days analysis: SKU + material coverage from BOM + inventory."""
+    xlsx = _ensure_xlsx_from_args(args)
+    sheets = _load_sheets(xlsx)
+    sku_qty = _load_sku_qty_from_args(args)
+    if not sku_qty:
+        sys.stderr.write("Error: --sku or --selections-json required for coverage-estimate\n")
+        raise SystemExit(1)
+
+    # 1. Expand BOM per SKU with qty=1
+    sku_dfs: dict[str, pd.DataFrame] = {}
+    for sku_key in sku_qty:
+        df = bom_expand_multi(
+            sheets, {sku_key: 1},
+            basis=args.basis,
+        )
+        sku_dfs[sku_key] = df
+
+    # 2. Build coverage matrix
+    matrix = build_coverage_matrix(sku_dfs)
+    if matrix.empty:
+        payload = {"cmd": "coverage-estimate", "xlsx": xlsx, "basis": args.basis,
+                    "sku_coverage": [], "material_coverage": []}
+        _dump_json(payload, out=args.out)
+        return 0
+
+    # 3. Load inventory from Supabase
+    safety_stock_json = {}
+    if args.safety_stock_json:
+        try:
+            safety_stock_json = json.loads(
+                Path(args.safety_stock_json).read_text(encoding="utf-8")
+                if Path(args.safety_stock_json).exists()
+                else args.safety_stock_json
+            )
+        except (json.JSONDecodeError, OSError) as exc:
+            sys.stderr.write(f"Error: invalid --safety-stock-json: {exc}\n")
+            raise SystemExit(1)
+
+    inventory: dict[str, float] = {}
+    try:
+        client = get_client()
+        inv_rows = client.list_latest_inventory_rows()
+        if inv_rows:
+            for r in inv_rows:
+                name = r.get("item_name", "")
+                qty = float(r.get("available_qty", 0) or 0)
+                if name:
+                    inventory[name] = inventory.get(name, 0) + qty
+    except Exception:
+        # No Supabase — use empty inventory (materials will show 0 coverage)
+        pass
+
+    # 4. Detect gap materials
+    gap_materials = {}
+    for sku_key in sku_qty:
+        if sku_key in sku_dfs:
+            sku_df = sku_dfs[sku_key]
+            for _, row in sku_df.iterrows():
+                mat = row["material"]
+                if row.get("is_gap") and mat not in gap_materials:
+                    gap_materials[mat] = row.get("gap_reason", "gap")
+
+    # 5. Compute coverage
+    sku_cov, mat_cov = compute_coverage(
+        matrix, sku_qty, inventory,
+        safety_stock=safety_stock_json,
+        gap_materials=gap_materials,
+    )
+
+    sku_rows = sku_cov.to_dict(orient="records") if not sku_cov.empty else []
+    mat_rows = mat_cov.to_dict(orient="records") if not mat_cov.empty else []
+
+    payload = {
+        "cmd": "coverage-estimate",
+        "xlsx": xlsx,
+        "basis": args.basis,
+        "sku_coverage": sku_rows,
+        "material_coverage": mat_rows,
+    }
+    if args.out and args.out.endswith(".csv"):
+        _dump_csv(sku_cov, out=args.out.replace(".csv", "_sku.csv"))
+        _dump_csv(mat_cov, out=args.out.replace(".csv", "_material.csv"))
         return 0
     _dump_json(payload, out=args.out)
     return 0
@@ -1050,6 +1142,17 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--format", choices=["json"], default="json")
     ps.add_argument("--out", help="Write JSON/CSV to file")
     ps.set_defaults(func=cmd_purchase_suggest)
+
+    # ── coverage-estimate ──────────────────────────────────────────────────
+    ce = sub.add_parser("coverage-estimate", help="Coverage days: SKU + material coverage from BOM + inventory")
+    ce.add_argument("xlsx", nargs="?", help="Path to xlsx")
+    ce.add_argument("--basis", choices=["factory", "store"], default="store")
+    ce.add_argument("--sku", action="append", default=[], help="品类|品名|规格=weekly_qty")
+    ce.add_argument("--selections-json", help="JSON file with {sku_key: weekly_qty}")
+    ce.add_argument("--safety-stock-json", help="JSON file or string with {material_name: qty}")
+    ce.add_argument("--format", choices=["json"], default="json")
+    ce.add_argument("--out", help="Write JSON/CSV to file")
+    ce.set_defaults(func=cmd_coverage_estimate)
 
     # ── file ──────────────────────────────────────────────────────────────────
     f = sub.add_parser("file", help="File management: upload / list / select / delete / info")
