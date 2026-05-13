@@ -171,6 +171,18 @@ class TestComputeCoverage:
         # 糖 is a gap — SKU coverage should only consider 牛奶
         assert sku_cov.iloc[0]["coverage_days"] == pytest.approx(12.5)
 
+    def test_material_zero_consumption(self):
+        """Material in BOM but zero consumption -> coverage_days = inf, status = 充足."""
+        matrix = pd.DataFrame({
+            "Gelato|A|小杯": [0.2],
+        }, index=pd.Index(["牛奶"]))
+        matrix.index.name = "material"
+        weekly_sales = {"Gelato|A|小杯": 0}  # zero sales
+        inventory = {"牛奶": 50.0}
+        sku_cov, mat_cov = compute_coverage(matrix, weekly_sales, inventory)
+        assert mat_cov.iloc[0]["coverage_days"] == float('inf')
+        assert mat_cov.iloc[0]["status"] == "充足"
+
     def test_coverage_status_classification(self):
         """Verify status thresholds: >=30 充足, 14-29 一般, 7-13 不足, <7 紧急."""
         # daily consumption = 1.0 per material (10/day * 0.1 qty)

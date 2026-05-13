@@ -111,8 +111,8 @@ def compute_coverage(
                 "safety_stock": safety_stock.get(mat, 0),
                 "effective_qty": max(0, inventory.get(mat, 0) - safety_stock.get(mat, 0)),
                 "daily_consumption": 0.0,
-                "coverage_days": None,
-                "status": "-",
+                "coverage_days": float('inf'),
+                "status": "充足",
             })
         return pd.DataFrame(sku_rows), pd.DataFrame(mat_rows)
 
@@ -139,8 +139,12 @@ def compute_coverage(
         is_gap = mat in gap_materials
 
         if is_gap or dc == 0:
-            days = None
-            status = gap_materials.get(mat, "-") if is_gap else "-"
+            if is_gap:
+                days = None
+                status = gap_materials.get(mat, "-")
+            else:
+                days = float('inf')
+                status = "充足"
         else:
             days = effective / dc
             status = _classify_coverage(days)
