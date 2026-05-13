@@ -11,18 +11,6 @@ from mike_product_calc.calc.coverage_analysis import (
     compute_coverage,
 )
 from mike_product_calc.calc.prep_engine import bom_expand_multi
-from mike_product_calc.data.loader import load_workbook
-
-
-def _status_color(status: str) -> str:
-    """Return a color hex for a coverage status."""
-    mapping = {
-        "充足": "#28a745",  # green
-        "一般": "#17a2b8",  # blue
-        "不足": "#ffc107",  # yellow
-        "紧急": "#dc3545",  # red
-    }
-    return mapping.get(status, "#6c757d")
 
 
 def render_coverage_tab() -> None:
@@ -100,7 +88,7 @@ def render_coverage_tab() -> None:
     st.divider()
     compute_col, _ = st.columns([1, 3])
     with compute_col:
-        compute_clicked = st.button("计算覆盖天数", type="primary", use_container_width=True)
+        compute_clicked = st.button("🔍 计算覆盖天数", type="primary", use_container_width=True)
 
     if not compute_clicked:
         return
@@ -174,10 +162,10 @@ def render_coverage_tab() -> None:
         # Style the dataframe
         display_sku = sku_cov.copy()
         display_sku["status"] = display_sku["status"].apply(
-            lambda s: f"充足" if s == "充足"
-            else (f"一般" if s == "一般"
-            else (f"不足" if s == "不足"
-            else (f"紧急" if s == "紧急" else s)))
+            lambda s: f"🟢 {s}" if s == "充足"
+            else (f"🔵 {s}" if s == "一般"
+            else (f"🟡 {s}" if s == "不足"
+            else (f"🔴 {s}" if s == "紧急" else s)))
         )
         display_sku["coverage_days"] = display_sku["coverage_days"].apply(
             lambda d: f"{d:.1f}" if d is not None and d != "-" else "-"
@@ -203,10 +191,10 @@ def render_coverage_tab() -> None:
     if not mat_cov.empty:
         display_mat = mat_cov.copy()
         display_mat["status"] = display_mat["status"].apply(
-            lambda s: f"充足" if s == "充足"
-            else (f"一般" if s == "一般"
-            else (f"不足" if s == "不足"
-            else (f"紧急" if s == "紧急" else s)))
+            lambda s: f"🟢 {s}" if s == "充足"
+            else (f"🔵 {s}" if s == "一般"
+            else (f"🟡 {s}" if s == "不足"
+            else (f"🔴 {s}" if s == "紧急" else s)))
         )
         st.dataframe(
             display_mat,
