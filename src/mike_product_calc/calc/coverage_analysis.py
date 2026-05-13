@@ -77,12 +77,12 @@ def compute_coverage(
 
     Returns:
         (sku_coverage_df, material_coverage_df):
-        - sku_coverage_df columns: sku_key, limiting_material, coverage_days, status
+        - sku_coverage_df columns: sku_key, weekly_sales, limiting_material, coverage_days, status
         - material_coverage_df columns: material, available_qty, safety_stock,
           effective_qty, daily_consumption, coverage_days, status
     """
     if bom_matrix.empty:
-        empty_sku = pd.DataFrame(columns=["sku_key", "limiting_material", "coverage_days", "status"])
+        empty_sku = pd.DataFrame(columns=["sku_key", "weekly_sales", "limiting_material", "coverage_days", "status"])
         empty_mat = pd.DataFrame(columns=["material", "available_qty", "safety_stock",
                                             "effective_qty", "daily_consumption",
                                             "coverage_days", "status"])

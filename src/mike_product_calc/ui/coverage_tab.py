@@ -106,7 +106,7 @@ def render_coverage_tab() -> None:
         # 1. BOM expansion per SKU with qty=1
         sku_dfs: Dict[str, pd.DataFrame] = {}
         progress_text = st.empty()
-        for i, sku_key in enumerate(weekly_sales):
+        for sku_key in weekly_sales:
             progress_text.caption(f"正在展开 BOM: {sku_key}")
             df = bom_expand_multi(
                 sheets, {sku_key: 1},
