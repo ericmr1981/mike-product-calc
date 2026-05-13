@@ -74,10 +74,10 @@ def shape_inventory_table(df: pd.DataFrame, reorder_point: float, safety_stock_m
 def apply_inventory_filters(
     df: pd.DataFrame,
     *,
-    status: str,
     keyword: str,
     warehouse_code: str,
     safety_status: str = "全部",
+    category: str = "全部",
 ) -> pd.DataFrame:
     """Apply storefront filters while remaining resilient to missing columns."""
     out = df.copy()
@@ -95,14 +95,14 @@ def apply_inventory_filters(
 
     if warehouse_code != "全部":
         out = out[out["warehouse_code"] == warehouse_code]
-    if status != "全部":
-        out = out[out["inventory_status"] == status]
     if safety_status == "低于安全库存":
         out = out[out["safety_status"] == "below_safety"]
     elif safety_status == "零库存":
         out = out[out["safety_status"] == "zero_stock"]
     elif safety_status == "正常":
         out = out[out["safety_status"] == "normal"]
+    if category != "全部":
+        out = out[out["category_lv2"] == category]
 
     normalized_keyword = keyword.strip()
     if normalized_keyword:
@@ -233,11 +233,16 @@ def render_inventory_tab(client) -> None:
     warehouse_label_map = _build_warehouse_label_map(df)
     warehouse_options = ["全部", *sorted(warehouse_label_map.keys())]
 
-    status_options = ["全部", "异常", "缺货", "低库存", "正常"]
+    category_options = ["全部"]
+    if "category_lv2" in df.columns:
+        category_options = ["全部"] + sorted(
+            c for c in df["category_lv2"].dropna().unique().tolist() if c
+        )
+
     if "inv_filter_warehouse_applied" not in st.session_state:
         st.session_state["inv_filter_warehouse_applied"] = "全部"
-    if "inv_filter_status_applied" not in st.session_state:
-        st.session_state["inv_filter_status_applied"] = "全部"
+    if "inv_filter_category_applied" not in st.session_state:
+        st.session_state["inv_filter_category_applied"] = "全部"
     if "inv_filter_safety_applied" not in st.session_state:
         st.session_state["inv_filter_safety_applied"] = "全部"
     if "inv_filter_keyword_applied" not in st.session_state:
@@ -251,9 +256,9 @@ def render_inventory_tab(client) -> None:
             if st.session_state["inv_filter_warehouse_applied"] in warehouse_options
             else 0
         )
-        status_default = (
-            status_options.index(st.session_state["inv_filter_status_applied"])
-            if st.session_state["inv_filter_status_applied"] in status_options
+        category_default = (
+            category_options.index(st.session_state["inv_filter_category_applied"])
+            if st.session_state["inv_filter_category_applied"] in category_options
             else 0
         )
         safety_default = (
@@ -267,7 +272,7 @@ def render_inventory_tab(client) -> None:
             index=wh_default,
             format_func=lambda x: "全部" if x == "全部" else warehouse_label_map.get(x, x),
         )
-        status_input = filter_col_2.selectbox("库存状态", options=status_options, index=status_default)
+        category_input = filter_col_2.selectbox("品类", options=category_options, index=category_default)
         safety_input = filter_col_3.selectbox("安全状态", options=SAFETY_STATUS_OPTIONS, index=safety_default)
         keyword_input = filter_col_4.text_input(
             "关键字（编码/名称）",
@@ -277,16 +282,16 @@ def render_inventory_tab(client) -> None:
 
     if apply_clicked:
         st.session_state["inv_filter_warehouse_applied"] = warehouse_code_input
-        st.session_state["inv_filter_status_applied"] = status_input
+        st.session_state["inv_filter_category_applied"] = category_input
         st.session_state["inv_filter_safety_applied"] = safety_input
         st.session_state["inv_filter_keyword_applied"] = keyword_input
 
     filtered_df = apply_inventory_filters(
         df,
-        status=st.session_state["inv_filter_status_applied"],
         keyword=st.session_state["inv_filter_keyword_applied"],
         warehouse_code=st.session_state["inv_filter_warehouse_applied"],
         safety_status=st.session_state["inv_filter_safety_applied"],
+        category=st.session_state["inv_filter_category_applied"],
     )
     kpis = build_inventory_kpis(filtered_df)
 
@@ -316,5 +321,7 @@ def render_inventory_tab(client) -> None:
     hide_cols = {"_priority", "safety_status", *HIDDEN_DEFAULT_COLUMNS}
     visible_df = filtered_df.drop(columns=list(hide_cols), errors="ignore")
 
-    styled = visible_df.style.apply(_styler_for_safety, axis=1)
+    NUMERIC_COLS = ["stock_qty", "available_qty", "occupied_qty", "expected_out_qty", "expected_in_qty", "current_amount", "stock_unit_price", "safety_stock"]
+    format_spec = {col: "{:.2f}" for col in NUMERIC_COLS if col in visible_df.columns}
+    styled = visible_df.style.apply(_styler_for_safety, axis=1).format(format_spec, na_rep="0.00")
     st.dataframe(styled, use_container_width=True, hide_index=True)

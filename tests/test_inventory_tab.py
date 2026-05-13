@@ -77,7 +77,7 @@ def test_shape_inventory_table_sorts_by_status_priority_then_qty_then_code() -> 
     assert out["item_code"].tolist() == ["ABN-1", "OOS-1", "LOW-0", "LOW-1", "N-2"]
 
 
-def test_apply_inventory_filters_by_status_keyword_and_warehouse() -> None:
+def test_apply_inventory_filters_by_keyword_and_warehouse() -> None:
     df = pd.DataFrame(
         [
             {
@@ -101,7 +101,7 @@ def test_apply_inventory_filters_by_status_keyword_and_warehouse() -> None:
         ]
     )
 
-    out = apply_inventory_filters(df, status="缺货", keyword="草莓", warehouse_code="GM002")
+    out = apply_inventory_filters(df, keyword="草莓", warehouse_code="GM002")
 
     assert len(out) == 1
     assert out.iloc[0]["item_code"] == "A"
@@ -115,7 +115,7 @@ def test_apply_inventory_filters_noop_for_all_filters_and_empty_keyword() -> Non
         ]
     )
 
-    out = apply_inventory_filters(df, status="全部", keyword="   ", warehouse_code="全部")
+    out = apply_inventory_filters(df, keyword="   ", warehouse_code="全部")
 
     assert out["item_code"].tolist() == ["A", "B"]
 
@@ -164,7 +164,7 @@ def test_apply_inventory_filters_safety_status_zero_stock() -> None:
             {"item_code": "C", "inventory_status": "正常", "warehouse_code": "GM001", "safety_status": "normal"},
         ]
     )
-    out = apply_inventory_filters(df, status="全部", keyword="", warehouse_code="全部", safety_status="零库存")
+    out = apply_inventory_filters(df, keyword="", warehouse_code="全部", safety_status="零库存")
     assert len(out) == 1
     assert out.iloc[0]["item_code"] == "A"
 
@@ -177,6 +177,20 @@ def test_apply_inventory_filters_safety_status_below_safety() -> None:
             {"item_code": "C", "inventory_status": "正常", "warehouse_code": "GM001", "safety_status": "normal"},
         ]
     )
-    out = apply_inventory_filters(df, status="全部", keyword="", warehouse_code="全部", safety_status="低于安全库存")
+    out = apply_inventory_filters(df, keyword="", warehouse_code="全部", safety_status="低于安全库存")
     assert len(out) == 1
     assert out.iloc[0]["item_code"] == "B"
+
+
+def test_apply_inventory_filters_by_category() -> None:
+    df = pd.DataFrame(
+        [
+            {"item_code": "A", "warehouse_code": "GM001", "category_lv2": "包材"},
+            {"item_code": "B", "warehouse_code": "GM001", "category_lv2": "原料"},
+            {"item_code": "C", "warehouse_code": "GM001", "category_lv2": "包材"},
+        ]
+    )
+    out = apply_inventory_filters(df, keyword="", warehouse_code="全部", category="包材")
+    assert len(out) == 2
+    assert out.iloc[0]["item_code"] == "A"
+    assert out.iloc[1]["item_code"] == "C"
