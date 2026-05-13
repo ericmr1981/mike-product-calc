@@ -180,8 +180,8 @@ class TestComputeCoverage:
         weekly_sales = {"Gelato|A|小杯": 0}  # zero sales
         inventory = {"牛奶": 50.0}
         sku_cov, mat_cov = compute_coverage(matrix, weekly_sales, inventory)
-        assert mat_cov.iloc[0]["coverage_days"] == float('inf')
-        assert mat_cov.iloc[0]["status"] == "充足"
+        assert mat_cov.iloc[0]["coverage_days"] is None
+        assert mat_cov.iloc[0]["status"] == "∞"
 
     def test_coverage_status_classification(self):
         """Verify status thresholds: >=30 充足, 14-29 一般, 7-13 不足, <7 紧急."""
