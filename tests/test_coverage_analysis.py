@@ -172,7 +172,7 @@ class TestComputeCoverage:
         assert sku_cov.iloc[0]["coverage_days"] == pytest.approx(12.5)
 
     def test_material_zero_consumption(self):
-        """Material in BOM but zero consumption -> coverage_days = inf, status = 充足."""
+        """Material in BOM but zero consumption -> coverage_days = None, status = ∞."""
         matrix = pd.DataFrame({
             "Gelato|A|小杯": [0.2],
         }, index=pd.Index(["牛奶"]))

@@ -1,7 +1,7 @@
 """coverage_tab.py — Streamlit UI for coverage days analysis."""
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Dict
 
 import pandas as pd
 import streamlit as st
@@ -15,7 +15,7 @@ from mike_product_calc.calc.prep_engine import bom_expand_multi
 
 def render_coverage_tab() -> None:
     """Render the coverage days analysis tab."""
-    st.header("覆盖天数分析")
+    st.header("📊 覆盖天数分析")
     st.caption("基于输入每周销量、BOM配方和库存快照，预估SKU和原料的覆盖天数。")
 
     # ── Ensure workbook is loaded ──
@@ -37,7 +37,7 @@ def render_coverage_tab() -> None:
         st.warning("Supabase 未连接，无法获取库存数据。原料覆盖天数将显示为 0。")
 
     # ── Section 1: Weekly sales input ──
-    st.subheader("每周销量输入")
+    st.subheader("📥 每周销量输入")
 
     # Initialize session state for weekly sales
     if "coverage_sales" not in st.session_state:
@@ -157,7 +157,7 @@ def render_coverage_tab() -> None:
         progress_text.empty()
 
     # ── Section 2: SKU coverage results ──
-    st.subheader("SKU 覆盖天数")
+    st.subheader("🏷️ SKU 覆盖天数")
     if not sku_cov.empty:
         # Style the dataframe
         display_sku = sku_cov.copy()
@@ -187,7 +187,7 @@ def render_coverage_tab() -> None:
         st.info("无SKU覆盖数据。")
 
     # ── Section 3: Material coverage results ──
-    st.subheader("原料覆盖天数")
+    st.subheader("🧪 原料覆盖天数")
     if not mat_cov.empty:
         display_mat = mat_cov.copy()
         display_mat["status"] = display_mat["status"].apply(
