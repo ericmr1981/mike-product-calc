@@ -1856,6 +1856,7 @@ with tab6:
                         })
                         st.success(f"已创建: {new_p_name}")
                         st.cache_data.clear()
+                        _hydrate_cache(_st_supa)
                         st.rerun()
                     else:
                         st.error("品名不能为空")
@@ -1904,6 +1905,7 @@ with tab6:
                 })
                 st.success("产品信息已更新")
                 st.cache_data.clear()
+                _hydrate_cache(_st_supa)
                 st.rerun()
 
         # ── Recipe BOM editor ──
@@ -1949,6 +1951,7 @@ with tab6:
                 if st.button("🗑️ 清空全部配方", key="clear_recipes"):
                     client.set_recipes(selected_id, [])
                     st.cache_data.clear()
+                    _hydrate_cache(_st_supa)
                     st.rerun()
 
             st.dataframe(df_recipes, use_container_width=True, hide_index=True)
@@ -1975,6 +1978,7 @@ with tab6:
                     client.set_recipes(selected_id, normalized)
                     st.success("配料已删除")
                     st.cache_data.clear()
+                    _hydrate_cache(_st_supa)
                     st.rerun()
         else:
             st.info("暂无配方明细数据。")
@@ -2024,6 +2028,7 @@ with tab6:
                     client.set_recipes(selected_id, existing_recipes)
                     st.success("配料已添加")
                     st.cache_data.clear()
+                    _hydrate_cache(_st_supa)
                     st.rerun()
 
 # ── Tab7: 出品规格管理 ──────────────────────────────────────
