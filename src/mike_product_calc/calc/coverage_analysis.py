@@ -29,6 +29,11 @@ def build_coverage_matrix(
             continue
         raw = df[df["is_semi_finished"] == False].copy()
         for _, row in raw.iterrows():
+            mat = row["material"]
+            # Skip rows with empty/invalid material names
+            mat_str = str(mat).strip()
+            if pd.isna(mat) or not mat_str or mat_str.lower() in ("nan", "none", "null", "nat"):
+                continue
             records.append({
                 "sku_key": sku_key,
                 "material": row["material"],
