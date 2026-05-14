@@ -108,14 +108,28 @@ def render_coverage_tab() -> None:
         progress_text = st.empty()
         for sku_key in weekly_sales:
             progress_text.caption(f"正在展开 BOM: {sku_key}")
-            df = bom_expand_multi(
-                sheets, {sku_key: 1},
-                basis="store",
-            )
-            sku_dfs[sku_key] = df
+            try:
+                df = bom_expand_multi(
+                    sheets, {sku_key: 1},
+                    basis="store",
+                )
+                sku_dfs[sku_key] = df
+                if df.empty:
+                    st.warning(f"SKU '{sku_key}' BOM 展开结果为空，该 SKU 可能不在产品出品表中。")
+            except Exception as _bom_err:
+                st.error(f"SKU '{sku_key}' BOM 展开失败: {_bom_err}")
+                sku_dfs[sku_key] = pd.DataFrame()
 
         progress_text.caption("构建覆盖矩阵...")
         matrix = build_coverage_matrix(sku_dfs)
+
+        with st.expander("🔍 调试信息", expanded=False):
+            st.write("SKU BOM 展开结果:")
+            for _sk, _df in sku_dfs.items():
+                st.write(f"**{_sk}**: {len(_df)} 行")
+                if not _df.empty:
+                    st.dataframe(_df[["material", "gross_qty", "is_semi_finished", "is_gap"]], hide_index=True)
+            st.write("覆盖矩阵:", matrix)
 
         if matrix.empty:
             st.warning("BOM 展开结果为空，无法计算。")
@@ -149,11 +163,16 @@ def render_coverage_tab() -> None:
 
         # 5. Compute
         progress_text.caption("计算覆盖天数...")
-        sku_cov, mat_cov = compute_coverage(
-            matrix, weekly_sales, inventory,
-            safety_stock=safety_stock,
-            gap_materials=gap_materials,
-        )
+        try:
+            sku_cov, mat_cov = compute_coverage(
+                matrix, weekly_sales, inventory,
+                safety_stock=safety_stock,
+                gap_materials=gap_materials,
+            )
+        except Exception as _cov_err:
+            st.error(f"覆盖天数计算失败: {_cov_err}")
+            sku_cov = pd.DataFrame()
+            mat_cov = pd.DataFrame()
         progress_text.empty()
 
     # ── Section 2: SKU coverage results ──
