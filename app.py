@@ -40,6 +40,7 @@ from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.model.production import ProductionRow
 from mike_product_calc.sync import excel_sync as _excel_sync
 from mike_product_calc.ui.inventory_tab import render_inventory_tab
+from mike_product_calc.ui.coverage_tab import render_coverage_tab
 
 # ── Constants ───────────────────────────────────────────────────────────────
 STATUS_ACTIVE = "上线"
@@ -590,7 +591,7 @@ def _render_inventory_fragment(client) -> None:
     render_inventory_tab(client)
 
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理", "配方管理", "出品规格", "门店库存"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(["概览/校验", "原数据", "原料价格模拟器", "产销计划", "原料管理", "配方管理", "出品规格", "门店库存", "覆盖天数分析"])
 
 with tab1:
     _heading_with_help("运营控制台概览",
@@ -2366,3 +2367,7 @@ with tab7:
 # ── Tab8: 门店库存 ──────────────────────────────────────────
 with tab8:
     _render_inventory_fragment(_st_supa)
+
+# ── Tab9: 覆盖天数分析 ──
+with tab9:
+    render_coverage_tab()

@@ -341,6 +341,48 @@ def test_cli_help_smoke():
     commands = ["validate", "sku-list", "profit-oracle",
                 "target-pricing", "material-sim",
                 "prep-plan", "purchase-suggest",
+                "coverage-estimate",
                 "state"]
     for cmd in commands:
         assert cmd in text, f"'{cmd}' not found in --help output"
+
+
+# ── 14. coverage-estimate ──────────────────────────────────────────────
+
+def test_cli_coverage_estimate_basic():
+    """coverage-estimate with --sku returns JSON with sku_coverage and material_coverage."""
+    r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--only-status", "上线",
+                 "--limit", "1", "--format", "json")
+    assert r.returncode == 0, r.stderr
+    sku = json.loads(r.stdout)["rows"][0]["product_key"]
+    r = _run_cli("coverage-estimate", str(XLSX), "--basis", "store",
+                 "--sku", f"{sku}=140", "--format", "json")
+    # coverage-estimate tries Supabase; if not available it should still return 0
+    # with empty inventory data
+    assert r.returncode == 0, r.stderr
+    data = json.loads(r.stdout)
+    assert data["cmd"] == "coverage-estimate"
+    assert "sku_coverage" in data
+    assert "material_coverage" in data
+
+
+def test_cli_coverage_estimate_selections_json(tmp_path):
+    """coverage-estimate with --selections-json also works."""
+    r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--only-status", "上线",
+                 "--limit", "1", "--format", "json")
+    assert r.returncode == 0, r.stderr
+    sku = json.loads(r.stdout)["rows"][0]["product_key"]
+    sel = tmp_path / "selections.json"
+    sel.write_text(json.dumps({sku: 140}), encoding="utf-8")
+    r = _run_cli("coverage-estimate", str(XLSX), "--basis", "store",
+                 "--selections-json", str(sel), "--format", "json")
+    assert r.returncode == 0, r.stderr
+    data = json.loads(r.stdout)
+    assert data["cmd"] == "coverage-estimate"
+    assert len(data["sku_coverage"]) > 0
+
+
+def test_cli_coverage_estimate_missing_sku():
+    """coverage-estimate without --sku returns error."""
+    r = _run_cli("coverage-estimate", str(XLSX), "--basis", "store")
+    assert r.returncode == 1
