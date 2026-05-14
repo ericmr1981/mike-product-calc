@@ -455,6 +455,12 @@ def _hydrate_cache(client) -> None:
 
 _st_supa = None
 _st_sheets: dict[str, pd.DataFrame] = {}
+_st_supabase_ok = False
+
+# Check if sheets were previously loaded from xlsx (survives reruns)
+_saved_sheets = st.session_state.get("sheets", {})
+_force_upload = False
+
 try:
     supabase_url, supabase_key = _get_supabase_credentials()
     from mike_product_calc.data.supabase_client import MpcSupabaseClient
@@ -468,29 +474,59 @@ try:
         return build_sheets(_c)
 
     _st_sheets = _cached_build_sheets(supabase_url, supabase_key)
+    _st_supabase_ok = True
 except Exception as _e:
-    st.error(f"Supabase 连接失败: {_e}")
-    st.stop()
+    if not _saved_sheets:
+        st.warning(f"Supabase 未连接: {_e}。可使用下方上传功能加载本地 Excel 文件。")
+        _force_upload = True
+    else:
+        _st_sheets = _saved_sheets
+
+st.session_state.supabase_client = _st_supa
+st.session_state.sheets = _st_sheets
+
+# ── If Supabase unavailable and no saved xlsx, offer xlsx upload ──
+if _force_upload:
+    uploaded_xlsx = st.file_uploader("选择 蜜可诗产品库.xlsx 文件", type=["xlsx"], key="xlsx_upload_bootstrap")
+    if uploaded_xlsx is not None:
+        with st.spinner("正在加载 Excel 数据..."):
+            tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+            tmp.write(uploaded_xlsx.getvalue())
+            tmp.flush()
+            try:
+                wb = load_workbook(Path(tmp.name))
+                _st_sheets = wb.sheets
+                st.session_state.sheets = _st_sheets
+                st.success(f"已加载 Excel: {uploaded_xlsx.name}")
+                st.rerun()
+            except Exception as _load_err:
+                st.error(f"文件加载失败: {_load_err}")
+            finally:
+                Path(tmp.name).unlink(missing_ok=True)
+    st.stop()  # Don't render tabs until data is loaded
 
 # Track supabase client and cached data in session state
-if "supabase" not in st.session_state:
+if "supabase" not in st.session_state and _st_supabase_ok:
     _hydrate_cache(_st_supa)
 
 with st.sidebar:
     st.subheader("操作中心")
     st.caption("更快地查看当前数据状态并执行常用刷新操作。")
-    if st.button("刷新 Supabase 缓存", width="stretch"):
-        with st.spinner("正在刷新缓存..."):
-            st.cache_data.clear()
-            _hydrate_cache(st.session_state.supabase)
-        st.success("缓存已刷新")
-        st.rerun()
+    if _st_supabase_ok:
+        if st.button("刷新 Supabase 缓存", width="stretch"):
+            with st.spinner("正在刷新缓存..."):
+                st.cache_data.clear()
+                _hydrate_cache(st.session_state.supabase)
+            st.success("缓存已刷新")
+            st.rerun()
 
-    st.markdown("#### 当前状态")
-    st.metric("原料数", len(st.session_state.cached_raw_materials))
-    st.metric("产品数", len(st.session_state.cached_products))
-    st.metric("规格数", len(st.session_state.cached_all_specs))
-    st.caption(f"最近加载时间：{st.session_state.get('cache_loaded_at', 'N/A')}")
+        st.markdown("#### 当前状态")
+        st.metric("原料数", len(st.session_state.cached_raw_materials))
+        st.metric("产品数", len(st.session_state.cached_products))
+        st.metric("规格数", len(st.session_state.cached_all_specs))
+        st.caption(f"最近加载时间：{st.session_state.get('cache_loaded_at', 'N/A')}")
+    else:
+        st.info("使用本地 Excel 文件，Supabase 功能不可用。")
     st.markdown(
         """
         <div class="sidebar-note">
