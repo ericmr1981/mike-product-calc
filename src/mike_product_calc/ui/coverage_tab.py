@@ -187,17 +187,24 @@ def render_coverage_tab() -> None:
         try:
             all_rows = client.list_latest_inventory_rows(limit=5000)
             if all_rows:
-                wh_codes = sorted(set(
-                    str(r.get("warehouse_code", "")).strip()
-                    for r in all_rows if r.get("warehouse_code")
-                ))
-                if wh_codes:
+                wh_label_map: dict[str, str] = {}
+                for r in all_rows:
+                    code = str(r.get("warehouse_code", "")).strip()
+                    name = str(r.get("warehouse_name", "")).strip()
+                    if code and code not in wh_label_map:
+                        wh_label_map[code] = f"{name}({code})" if name else code
+                wh_options = sorted(wh_label_map.keys())
+                wh_labels = [wh_label_map[c] for c in wh_options]
+                if wh_options:
                     st.subheader("🏭 选择仓库")
-                    selected_warehouses = st.multiselect(
+                    selected_labels = st.multiselect(
                         "筛选库存仓库（默认全选）",
-                        options=wh_codes,
-                        default=wh_codes,
+                        options=wh_labels,
+                        default=wh_labels,
                     )
+                    # Map back from labels to codes
+                    label_to_code = {v: k for k, v in wh_label_map.items()}
+                    selected_warehouses = [label_to_code.get(l, l) for l in selected_labels]
         except Exception:
             pass
 
@@ -218,6 +225,9 @@ def render_coverage_tab() -> None:
     if not weekly_sales:
         st.warning("请至少输入一个SKU的周销量（大于0）。")
         return
+
+    sku_cov = pd.DataFrame()
+    mat_cov = pd.DataFrame()
 
     with st.spinner("计算覆盖天数中..."):
         # 1. BOM expansion per SKU with qty=1
@@ -253,12 +263,11 @@ def render_coverage_tab() -> None:
             st.write("**覆盖矩阵 (material × SKU):**")
             st.dataframe(matrix)
 
-            # Show material catalog info
-            mat_cat = _build_material_catalog_map(sheets)
-            if mat_cat:
+            mat_cat_for_debug = _build_material_catalog_map(sheets)
+            if mat_cat_for_debug:
                 cat_rows = []
                 for mat in matrix.index:
-                    info = mat_cat.get(mat)
+                    info = mat_cat_for_debug.get(mat)
                     if info:
                         cat_rows.append({
                             "原料": mat,
@@ -268,8 +277,6 @@ def render_coverage_tab() -> None:
                 if cat_rows:
                     st.write("**原料目录单位信息 (总原料成本表):**")
                     st.dataframe(pd.DataFrame(cat_rows), hide_index=True)
-            else:
-                st.write("**未找到总原料成本表**")
 
         if matrix.empty:
             st.warning("BOM 展开结果为空，无法计算。")
@@ -319,81 +326,84 @@ def render_coverage_tab() -> None:
         # 6. Compute
         progress_text.caption("计算覆盖天数...")
 
-        # ── Detailed calculation log ──
-        calc_log = ["### 覆盖天数计算步骤"]
-        calc_log.append(f"\n**每周销量 (份/周):** {weekly_sales}")
-        calc_log.append(f"\n**SKU 日销量 = 周销量 / 7:**")
-        for sku, ws in weekly_sales.items():
-            calc_log.append(f"  {sku}: {ws} / 7 = {ws/7:.3f} 份/天")
+        # ── Detailed calculation log (wrapped to never block results) ──
+        try:
+            calc_log = ["### 覆盖天数计算步骤"]
+            calc_log.append(f"\n**每周销量 (份/周):** {weekly_sales}")
+            calc_log.append(f"\n**SKU 日销量 = 周销量 / 7:**")
+            for sku, ws in weekly_sales.items():
+                calc_log.append(f"  {sku}: {ws} / 7 = {ws/7:.3f} 份/天")
 
-        calc_log.append(f"\n**原料矩阵 (每份用量, 含损耗率):**")
-        for mat in matrix.index:
-            for sku in matrix.columns:
-                qty = matrix.loc[mat, sku]
-                if qty > 0:
-                    calc_log.append(f"  {mat} ← {sku}: {qty:.4f}")
+            calc_log.append(f"\n**原料矩阵 (每份用量, 含损耗率):**")
+            for mat in matrix.index:
+                for sku in matrix.columns:
+                    qty = matrix.loc[mat, sku]
+                    if qty > 0:
+                        calc_log.append(f"  {mat} ← {sku}: {qty:.4f}")
 
-        calc_log.append(f"\n**库存 (转换后):**")
-        for mat, qty in sorted(inventory.items()):
-            ss = safety_stock.get(mat, 0)
-            effective = max(0, qty - ss)
-            eff_str = f"{qty}" + (f" - {ss}(安全库存) = {effective}" if ss else "")
-            calc_log.append(f"  {mat}: {eff_str}")
+            calc_log.append(f"\n**库存 (转换后):**")
+            for mat, qty in sorted(inventory.items()):
+                ss = safety_stock.get(mat, 0)
+                effective = max(0, qty - ss)
+                eff_str = f"{qty}" + (f" - {ss}(安全库存) = {effective}" if ss else "")
+                calc_log.append(f"  {mat}: {eff_str}")
 
-        calc_log.append(f"\n**日消耗量 = Σ(SKU日销量 × 每份用量):**")
-        daily_rates = {}
-        for mat in matrix.index:
-            dr = 0
-            parts = []
-            for sku in matrix.columns:
-                sku_dr = weekly_sales.get(sku, 0) / 7
-                qty = matrix.loc[mat, sku]
-                if qty > 0 and sku_dr > 0:
-                    contrib = sku_dr * qty
-                    dr += contrib
-                    parts.append(f"{sku_dr:.3f}×{qty:.4f}={contrib:.4f}")
-            if dr > 0:
-                daily_rates[mat] = dr
-                calc_log.append(f"  {mat}: {' + '.join(parts)} = {dr:.4f}")
-
-        calc_log.append(f"\n**原料覆盖天数 = 有效库存 / 日消耗量:**")
-        for mat, dr in sorted(daily_rates.items(), key=lambda x: x[1], reverse=True):
-            avail = inventory.get(mat, 0)
-            ss = safety_stock.get(mat, 0)
-            effective = max(0, avail - ss)
-            gap = " (gap)" if mat in gap_materials else ""
-            if dr > 0:
-                is_gap = mat in gap_materials
-                days_str = f"{effective/dr:.1f}" if not is_gap else "N/A (gap)"
-                calc_log.append(f"  {mat}: {effective:.2f} / {dr:.4f} = {days_str} 天{gap}")
-            else:
-                calc_log.append(f"  {mat}: 未被消耗 ∞{gap}")
-
-        calc_log.append(f"\n**SKU 覆盖天数 = min(所用原料覆盖天数):**")
-        for sku in matrix.columns:
-            ws = weekly_sales.get(sku, 0)
-            if ws == 0:
-                calc_log.append(f"  {sku}: 周销量=0, 跳过")
-                continue
-            sku_mats = [m for m in matrix.index if matrix.loc[m, sku] > 0 and m not in gap_materials]
-            if not sku_mats:
-                calc_log.append(f"  {sku}: 无可用原料（均为 gap）")
-                continue
-            mat_days = {}
-            for m in sku_mats:
-                dr = daily_rates.get(m, 0)
+            calc_log.append(f"\n**日消耗量 = Σ(SKU日销量 × 每份用量):**")
+            daily_rates = {}
+            for mat in matrix.index:
+                dr = 0
+                parts = []
+                for sku in matrix.columns:
+                    sku_dr = weekly_sales.get(sku, 0) / 7
+                    qty = matrix.loc[mat, sku]
+                    if qty > 0 and sku_dr > 0:
+                        contrib = sku_dr * qty
+                        dr += contrib
+                        parts.append(f"{sku_dr:.3f}×{qty:.4f}={contrib:.4f}")
                 if dr > 0:
-                    avail = inventory.get(m, 0)
-                    ss = safety_stock.get(m, 0)
-                    effective = max(0, avail - ss)
-                    mat_days[m] = effective / dr
-                else:
-                    mat_days[m] = float("inf")
-            limiting = min(mat_days, key=mat_days.get)
-            calc_log.append(f"  {sku}: min({mat_days}) = {mat_days[limiting]:.1f} 天 (限制原料: {limiting})")
+                    daily_rates[mat] = dr
+                    calc_log.append(f"  {mat}: {' + '.join(parts)} = {dr:.4f}")
 
-        with st.expander("📐 计算明细", expanded=True):
-            st.markdown("\n".join(calc_log))
+            calc_log.append(f"\n**原料覆盖天数 = 有效库存 / 日消耗量:**")
+            for mat, dr in sorted(daily_rates.items(), key=lambda x: x[1], reverse=True):
+                avail = inventory.get(mat, 0)
+                ss = safety_stock.get(mat, 0)
+                effective = max(0, avail - ss)
+                gap = " (gap)" if mat in gap_materials else ""
+                if dr > 0:
+                    is_gap = mat in gap_materials
+                    days_str = f"{effective/dr:.1f}" if not is_gap else "N/A (gap)"
+                    calc_log.append(f"  {mat}: {effective:.2f} / {dr:.4f} = {days_str} 天{gap}")
+                else:
+                    calc_log.append(f"  {mat}: 未被消耗 ∞{gap}")
+
+            calc_log.append(f"\n**SKU 覆盖天数 = min(所用原料覆盖天数):**")
+            for sku in matrix.columns:
+                ws = weekly_sales.get(sku, 0)
+                if ws == 0:
+                    calc_log.append(f"  {sku}: 周销量=0, 跳过")
+                    continue
+                sku_mats = [m for m in matrix.index if matrix.loc[m, sku] > 0 and m not in gap_materials]
+                if not sku_mats:
+                    calc_log.append(f"  {sku}: 无可用原料（均为 gap）")
+                    continue
+                mat_days = {}
+                for m in sku_mats:
+                    dr = daily_rates.get(m, 0)
+                    if dr > 0:
+                        avail = inventory.get(m, 0)
+                        ss = safety_stock.get(m, 0)
+                        effective = max(0, avail - ss)
+                        mat_days[m] = effective / dr
+                    else:
+                        mat_days[m] = float("inf")
+                limiting = min(mat_days, key=mat_days.get)
+                calc_log.append(f"  {sku}: min({mat_days}) = {mat_days[limiting]:.1f} 天 (限制原料: {limiting})")
+
+            with st.expander("📐 计算明细", expanded=True):
+                st.markdown("\n".join(calc_log))
+        except Exception as _log_err:
+            st.warning(f"计算明细生成异常（不影响结果）: {_log_err}")
 
         try:
             sku_cov, mat_cov = compute_coverage(
@@ -405,8 +415,6 @@ def render_coverage_tab() -> None:
             st.error(f"覆盖天数计算失败: {_cov_err}")
             import traceback
             st.code(traceback.format_exc())
-            sku_cov = pd.DataFrame()
-            mat_cov = pd.DataFrame()
         progress_text.empty()
 
     # ── Section 2: SKU coverage results ──
