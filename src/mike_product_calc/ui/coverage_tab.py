@@ -208,14 +208,13 @@ def render_coverage_tab() -> None:
         except Exception:
             pass
 
-    # ── Compute button ──
-    st.divider()
-    compute_col, _ = st.columns([1, 3])
-    with compute_col:
-        compute_clicked = st.button("🔍 计算覆盖天数", type="primary", use_container_width=True)
+    # ── Compute trigger ──
+    if st.button("🔍 计算覆盖天数", type="primary", use_container_width=True):
+        st.session_state.coverage_compute_requested = True
 
-    # ── Run computation when button is clicked, store in session state ──
-    if compute_clicked:
+    # ── Run computation when requested, store in session state ──
+    if st.session_state.get("coverage_compute_requested"):
+        st.session_state.coverage_compute_requested = False  # consume the request
         weekly_sales = {
             sku: qty for sku, qty in st.session_state.coverage_sales.items()
             if qty > 0
