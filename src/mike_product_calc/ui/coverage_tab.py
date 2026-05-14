@@ -315,15 +315,9 @@ def render_coverage_tab() -> None:
                             safety_stock=safety_stock,
                             gap_materials=gap_materials,
                         )
-                        st.session_state.coverage_results = {
-                            "sku_cov": sku_cov,
-                            "mat_cov": mat_cov,
-                            "weekly_sales": weekly_sales,
-                            "inventory": inventory,
-                            "safety_stock": safety_stock,
-                            "gap_materials": gap_materials,
-                            "matrix": matrix,
-                        }
+                        st.session_state.cov_sku_dicts = sku_cov.to_dict(orient="records") if not sku_cov.empty else []
+                        st.session_state.cov_mat_dicts = mat_cov.to_dict(orient="records") if not mat_cov.empty else []
+                        st.session_state.cov_computed = True
                     except Exception as _cov_err:
                         st.error(f"覆盖天数计算失败: {_cov_err}")
                         import traceback
@@ -331,14 +325,13 @@ def render_coverage_tab() -> None:
                     progress_text.empty()
 
     # ── Diagnostic: always show state after button ──
-    diag = f"**诊断:** sheets={'✅' if sheets else '❌'} | SKUs={len(sku_options)} | 有销量={sum(1 for v in st.session_state.coverage_sales.values() if v > 0)} | 已计算={'✅' if st.session_state.get('coverage_results') else '❌'}"
+    diag = f"**诊断:** sheets={'✅' if sheets else '❌'} | SKUs={len(sku_options)} | 有销量={sum(1 for v in st.session_state.coverage_sales.values() if v > 0)} | 已计算={'✅' if st.session_state.get('cov_computed') else '❌'} | cov={len(st.session_state.get('cov_sku_dicts', []))}条"
     st.caption(diag)
 
     # ── Display results from session state ──
-    results = st.session_state.get("coverage_results")
-    if results:
-        sku_cov = results["sku_cov"]
-        mat_cov = results["mat_cov"]
+    if st.session_state.get("cov_computed"):
+        sku_cov = pd.DataFrame(st.session_state.get("cov_sku_dicts", []))
+        mat_cov = pd.DataFrame(st.session_state.get("cov_mat_dicts", []))
 
         st.subheader("🏷️ SKU 覆盖天数")
         if not sku_cov.empty:
