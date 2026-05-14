@@ -345,8 +345,9 @@ def render_coverage_tab() -> None:
             effective = max(0, avail - ss)
             gap = " (gap)" if mat in gap_materials else ""
             if dr > 0:
-                days = effective / dr if not gap_materials.get(mat) else None
-                calc_log.append(f"  {mat}: {effective:.2f} / {dr:.4f} = {days:.1f} 天{gap}")
+                is_gap = mat in gap_materials
+                days_str = f"{effective/dr:.1f}" if not is_gap else "N/A (gap)"
+                calc_log.append(f"  {mat}: {effective:.2f} / {dr:.4f} = {days_str} 天{gap}")
             else:
                 calc_log.append(f"  {mat}: 未被消耗 ∞{gap}")
 
