@@ -128,7 +128,7 @@ def render_coverage_tab() -> None:
             for _sk, _df in sku_dfs.items():
                 st.write(f"**{_sk}**: {len(_df)} 行")
                 if not _df.empty:
-                    st.dataframe(_df[["material", "gross_qty", "is_semi_finished", "is_gap"]], hide_index=True)
+                    st.dataframe(_df[["material", "total_gross_qty", "is_semi_finished", "is_gap"]], hide_index=True)
             st.write("覆盖矩阵:", matrix)
 
         if matrix.empty:

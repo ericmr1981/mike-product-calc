@@ -32,7 +32,7 @@ def build_coverage_matrix(
             records.append({
                 "sku_key": sku_key,
                 "material": row["material"],
-                "qty_per_unit": row.get("gross_qty", row.get("purchase_qty", 0)),
+                "qty_per_unit": row.get("gross_qty", row.get("total_gross_qty", row.get("purchase_qty", row.get("total_purchase_qty", 0)))),
             })
 
     if not records:
