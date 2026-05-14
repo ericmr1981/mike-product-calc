@@ -1,6 +1,8 @@
 """coverage_tab.py — Streamlit UI for coverage days analysis."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Dict
 
 import pandas as pd
@@ -11,6 +13,82 @@ from mike_product_calc.calc.coverage_analysis import (
     compute_coverage,
 )
 from mike_product_calc.calc.prep_engine import bom_expand_multi
+
+
+def _coverage_state_path() -> Path:
+    """Return path to coverage sales state file."""
+    state_dir = Path(__file__).resolve().parents[3] / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir / "coverage_sales.json"
+
+
+def _load_saved_sales() -> dict[str, float]:
+    """Load previously saved weekly sales from state file."""
+    fp = _coverage_state_path()
+    if fp.exists():
+        try:
+            return json.loads(fp.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_sales(sales: dict[str, float]) -> None:
+    """Save weekly sales to state file."""
+    fp = _coverage_state_path()
+    fp.write_text(json.dumps(sales, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _build_material_catalog_map(sheets: dict) -> dict[str, dict]:
+    """Extract material unit info from 总原料成本表 for unit conversion.
+
+    Returns {material_name: {order_unit, unit_qty}}.
+    """
+    for sheet_name, df in sheets.items():
+        if "总原料成本表" not in sheet_name:
+            continue
+        if "品项名称" not in df.columns:
+            continue
+        catalog: dict[str, dict] = {}
+        for _, row in df.iterrows():
+            name = str(row.get("品项名称", "")).strip()
+            if not name:
+                continue
+            order_unit = str(row.get("订货单位", "")).strip() if "订货单位" in df.columns else ""
+            try:
+                unit_qty = float(row["单位量"]) if "单位量" in df.columns and row.get("单位量") else None
+            except (ValueError, TypeError):
+                unit_qty = None
+            if unit_qty is not None and unit_qty > 0:
+                catalog[name] = {"order_unit": order_unit, "unit_qty": unit_qty}
+        return catalog
+    return {}
+
+
+def _convert_inventory_unit(
+    inventory: dict[str, float],
+    inv_units: dict[str, str],
+    mat_catalog: dict[str, dict],
+) -> tuple[dict[str, float], list[str]]:
+    """Convert inventory quantities to base units using material catalog.
+
+    Returns (converted_inventory, conversion_log).
+    """
+    converted: dict[str, float] = {}
+    logs: list[str] = []
+    for mat, qty in inventory.items():
+        inv_unit = inv_units.get(mat, "")
+        cat_info = mat_catalog.get(mat)
+        if cat_info and inv_unit and inv_unit != cat_info["order_unit"]:
+            new_qty = qty * cat_info["unit_qty"]
+            converted[mat] = new_qty
+            logs.append(
+                f"{mat}: {qty} {inv_unit} → {new_qty:.2f} {cat_info['order_unit']} "
+                f"(×{cat_info['unit_qty']})"
+            )
+        else:
+            converted[mat] = qty
+    return converted, logs
 
 
 def render_coverage_tab() -> None:
@@ -33,15 +111,16 @@ def render_coverage_tab() -> None:
     # Check for Supabase client (for inventory data)
     client = st.session_state.get("supabase_client")
     inv_ready = client is not None
-    if not inv_ready:
-        st.warning("Supabase 未连接，无法获取库存数据。原料覆盖天数将显示为 0。")
 
     # ── Section 1: Weekly sales input ──
     st.subheader("📥 每周销量输入")
 
     # Initialize session state for weekly sales
     if "coverage_sales" not in st.session_state:
-        st.session_state.coverage_sales = {sku: 0.0 for sku in sku_options}
+        saved = _load_saved_sales()
+        st.session_state.coverage_sales = {
+            sku: saved.get(sku, 0.0) for sku in sku_options
+        }
 
     # Build editable input table
     sales_data = []
@@ -83,6 +162,44 @@ def render_coverage_tab() -> None:
     for _, row in edited_df.iterrows():
         sku_key = str(row["SKU Key"])
         st.session_state.coverage_sales[sku_key] = float(row["周销量"])
+
+    # ── Save / Load buttons ──
+    s_col1, s_col2 = st.columns([1, 5])
+    with s_col1:
+        if st.button("💾 保存销量", use_container_width=True):
+            _save_sales(st.session_state.coverage_sales)
+            st.success("每周销量已保存。")
+    with s_col2:
+        if st.button("📂 加载已保存销量", use_container_width=True):
+            saved = _load_saved_sales()
+            if saved:
+                st.session_state.coverage_sales = {
+                    sku: saved.get(sku, 0.0) for sku in sku_options
+                }
+                st.rerun()
+            else:
+                st.info("未找到已保存的销量数据。")
+
+    # ── Warehouse selection (only if Supabase available) ──
+    selected_warehouses: list[str] = []
+    all_rows: list[dict] = []
+    if inv_ready:
+        try:
+            all_rows = client.list_latest_inventory_rows(limit=5000)
+            if all_rows:
+                wh_codes = sorted(set(
+                    str(r.get("warehouse_code", "")).strip()
+                    for r in all_rows if r.get("warehouse_code")
+                ))
+                if wh_codes:
+                    st.subheader("🏭 选择仓库")
+                    selected_warehouses = st.multiselect(
+                        "筛选库存仓库（默认全选）",
+                        options=wh_codes,
+                        default=wh_codes,
+                    )
+        except Exception:
+            pass
 
     # ── Compute button ──
     st.divider()
@@ -128,31 +245,47 @@ def render_coverage_tab() -> None:
             for _sk, _df in sku_dfs.items():
                 st.write(f"**{_sk}**: {len(_df)} 行")
                 if not _df.empty:
-                    st.dataframe(_df[["material", "total_gross_qty", "is_semi_finished", "is_gap"]], hide_index=True)
+                    cols = [c for c in ["material", "total_gross_qty", "purchase_unit", "is_semi_finished", "is_gap"] if c in _df.columns]
+                    st.dataframe(_df[cols], hide_index=True)
             st.write("覆盖矩阵:", matrix)
 
         if matrix.empty:
             st.warning("BOM 展开结果为空，无法计算。")
             return
 
-        # 2. Load inventory from Supabase
+        # 2. Load inventory from Supabase (with warehouse filter)
         inventory: Dict[str, float] = {}
-        if client:
+        inv_units: Dict[str, str] = {}
+        if inv_ready and all_rows:
             try:
-                inv_rows = client.list_latest_inventory_rows()
-                if inv_rows:
-                    for r in inv_rows:
-                        name = r.get("item_name", "")
-                        qty = float(r.get("available_qty", 0) or 0)
-                        if name:
-                            inventory[name] = inventory.get(name, 0) + qty
+                for r in all_rows:
+                    wh = str(r.get("warehouse_code", "")).strip()
+                    if selected_warehouses and wh and wh not in selected_warehouses:
+                        continue
+                    name = r.get("item_name", "")
+                    qty = float(r.get("available_qty", 0) or 0)
+                    if name:
+                        inventory[name] = inventory.get(name, 0) + qty
+                        inv_units[name] = str(r.get("unit", "")).strip()
             except Exception:
                 pass
+        elif not inv_ready:
+            st.info("Supabase 未连接，无法获取库存数据。原料覆盖天数将显示为 0。")
 
-        # 3. Safety stock from session state
+        # 3. Convert inventory units via material catalog
+        mat_catalog = _build_material_catalog_map(sheets)
+        unit_logs: list[str] = []
+        if mat_catalog:
+            inventory, unit_logs = _convert_inventory_unit(inventory, inv_units, mat_catalog)
+            if unit_logs:
+                with st.expander("📐 单位转换记录", expanded=False):
+                    for log in unit_logs:
+                        st.write(f"- {log}")
+
+        # 4. Safety stock from session state
         safety_stock: Dict[str, float] = st.session_state.get("safety_stock_map", {})
 
-        # 4. Detect gap materials
+        # 5. Detect gap materials
         gap_materials: Dict[str, str] = {}
         for sku_key in weekly_sales:
             if sku_key in sku_dfs:
@@ -161,7 +294,7 @@ def render_coverage_tab() -> None:
                     if row["is_gap"]:
                         gap_materials[row["material"]] = row.get("gap_reason", "gap")
 
-        # 5. Compute
+        # 6. Compute
         progress_text.caption("计算覆盖天数...")
         try:
             sku_cov, mat_cov = compute_coverage(
@@ -171,6 +304,8 @@ def render_coverage_tab() -> None:
             )
         except Exception as _cov_err:
             st.error(f"覆盖天数计算失败: {_cov_err}")
+            import traceback
+            st.code(traceback.format_exc())
             sku_cov = pd.DataFrame()
             mat_cov = pd.DataFrame()
         progress_text.empty()
@@ -178,7 +313,6 @@ def render_coverage_tab() -> None:
     # ── Section 2: SKU coverage results ──
     st.subheader("🏷️ SKU 覆盖天数")
     if not sku_cov.empty:
-        # Style the dataframe
         display_sku = sku_cov.copy()
         display_sku["status"] = display_sku["status"].apply(
             lambda s: f"🟢 {s}" if s == "充足"
