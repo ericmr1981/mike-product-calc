@@ -331,6 +331,10 @@ def render_coverage_tab() -> None:
                         st.code(traceback.format_exc())
                     progress_text.empty()
 
+    # ── Diagnostic: always show state after button ──
+    diag = f"**诊断:** sheets={'✅' if sheets else '❌'} | SKUs={len(sku_options)} | 有销量={sum(1 for v in st.session_state.coverage_sales.values() if v > 0)} | 已计算={'✅' if st.session_state.get('coverage_results') else '❌'}"
+    st.caption(diag)
+
     # ── Display results from session state ──
     results = st.session_state.get("coverage_results")
     if results:
