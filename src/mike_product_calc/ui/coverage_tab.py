@@ -253,6 +253,24 @@ def render_coverage_tab() -> None:
             st.write("**覆盖矩阵 (material × SKU):**")
             st.dataframe(matrix)
 
+            # Show material catalog info
+            mat_cat = _build_material_catalog_map(sheets)
+            if mat_cat:
+                cat_rows = []
+                for mat in matrix.index:
+                    info = mat_cat.get(mat)
+                    if info:
+                        cat_rows.append({
+                            "原料": mat,
+                            "订货单位": info["order_unit"],
+                            "单位量(kg/单位)": info["unit_qty"],
+                        })
+                if cat_rows:
+                    st.write("**原料目录单位信息 (总原料成本表):**")
+                    st.dataframe(pd.DataFrame(cat_rows), hide_index=True)
+            else:
+                st.write("**未找到总原料成本表**")
+
         if matrix.empty:
             st.warning("BOM 展开结果为空，无法计算。")
             return
