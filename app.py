@@ -766,6 +766,8 @@ with tab3:
             options=["factory", "store"],
             format_func=lambda x: "出厂口径" if x == "factory" else "门店口径",
             horizontal=True,
+            index=1,
+            key="basis_t4_radio",
         )
 
     if not selected_product:
@@ -853,104 +855,128 @@ with tab3:
     if recipe_df.empty:
         st.info("暂无配方明细数据。")
     else:
-        # Editable store_price column using data_editor
-        editor_cols = ["item", "usage_qty", "cost", "spec", "store_price", "brand_cost", "profit_rate", "level", "is_semi"]
-        editor_df = recipe_df[editor_cols].copy() if all(c in recipe_df.columns for c in editor_cols) else recipe_df
+        st.markdown("##### 配方明细 — 直接调整原料门店价格")
+        st.caption("修改下方数值，立即看到成本与毛利变化")
 
-        # Add hierarchy indentation to item names
-        if "level" in recipe_df.columns:
-            editor_df["item"] = recipe_df.apply(
-                lambda r: "↳ " + str(r["item"]) if r["level"] == 2 else str(r["item"]),
-                axis=1,
-            )
+        # Clear stale widget state when basis changes
+        basis_state_key = f"_basis_{selected_sku.replace('|', '_')}"
+        if basis_state_key not in st.session_state:
+            st.session_state[basis_state_key] = basis_t4
+        elif st.session_state[basis_state_key] != basis_t4:
+            prefix = f"sp_{selected_sku.replace('|', '_')}_"
+            stale = [k for k in st.session_state.keys() if k.startswith(prefix)]
+            for k in stale:
+                del st.session_state[k]
+            st.session_state[basis_state_key] = basis_t4
 
-        edited = st.data_editor(
-            editor_df,
-            use_container_width=True,
-            height=400,
-            hide_index=True,
-            column_config={
-                "item": st.column_config.TextColumn("项目", disabled=True),
-                "usage_qty": st.column_config.NumberColumn("用量", disabled=True, format="%.1f"),
-                "cost": st.column_config.NumberColumn("成本", disabled=True, format="%.2f"),
-                "spec": st.column_config.TextColumn("规格", disabled=True),
-                "store_price": st.column_config.NumberColumn("门店价格", format="%.2f"),
-                "brand_cost": st.column_config.NumberColumn("品牌成本", disabled=True, format="%.2f"),
-                "profit_rate": st.column_config.NumberColumn("利润率(%)", disabled=True, format="%.1f"),
-                "level": None,
-                "is_semi": None,
-            },
-        )
+        recipe_rows = recipe_df.copy()
 
-        # Recalculate costs based on edited store_price
         total_cost = 0.0
         brand_cost_total = 0.0
-        recalc_data = edited.to_dict("records")
-        for row in recalc_data:
-            # Skip sub-ingredient rows (level=2) — their costs are included in the semi-parent row
-            if row.get("level") == 2:
-                continue
 
-            orig_cost = row.get("cost", 0) or 0
-            orig_sp = row.get("store_price", 0) or 0
-            new_sp_val = row.get("store_price", 0) or 0
+        # Track semi-product costs for both store and brand
+        semi_item: str | None = None
+        semi_spec: float = 1.0
+        semi_usage_qty: float = 0.0
+        semi_store_cost: float = 0.0   # sum of Level 2 children store costs (full recipe)
+        semi_brand_cost: float = 0.0   # sum of Level 2 children brand costs (full recipe)
 
-            try:
-                new_sp_f = float(new_sp_val)
-                orig_sp_f = float(orig_sp)
-            except (TypeError, ValueError):
-                continue
+        for _, row in recipe_rows.iterrows():
+            item_name = str(row.get("item", "")).strip()
+            usage_qty = float(row.get("usage_qty", 0) or 0)
+            orig_cost = float(row.get("cost", 0) or 0)
+            orig_sp = float(row.get("store_price", 0) or 0)
+            spec_str = str(row.get("spec", "") or "")
+            brand_cost = float(row.get("brand_cost", 0) or 0)
+            level = int(row.get("level", 0))
+            sp_key = f"sp_{selected_sku.replace('|', '_')}_{item_name}"
 
-            # Cost adjustment depends on basis:
-            # - store: cost = store_price × usage_qty / spec → proportional to store_price
-            # - factory: cost = brand_cost × usage_qty / spec → independent of store_price
-            if basis_t4 == "store" and orig_sp_f > 0 and abs(orig_sp_f - new_sp_f) > 0.0001:
-                row["cost"] = round(float(orig_cost) * (new_sp_f / orig_sp_f), 2)
-            # else keep original cost (factory basis doesn't adjust with store_price)
+            st.markdown(f"**{item_name}**  用量 {usage_qty} | 规格 {spec_str}")
+            new_sp = st.number_input(
+                f"门店价格（{item_name}）",
+                value=st.session_state.get(sp_key, orig_sp),
+                key=sp_key,
+                format="%.2f",
+                step=0.5,
+            )
 
-            # Recalculate profit_rate
-            try:
-                bc_f = float(row.get("brand_cost", 0) or 0)
-            except (TypeError, ValueError):
-                bc_f = 0
-            row["profit_rate"] = round(_calc_profit_rate(new_sp_f, bc_f) * 100, 1)
+            # Proportional: store cost scales with store_price change
+            ratio = (new_sp / orig_sp) if (basis_t4 == "store" and orig_sp > 0 and new_sp > 0 and new_sp != orig_sp and orig_cost > 0) else 1.0
+            calc_cost = round(orig_cost * ratio, 4)
+            # Brand cost = calc_cost × (brand_price / store_price) at same scale
+            calc_brand = round(calc_cost * (brand_cost / orig_sp), 4) if orig_sp > 0 else round(brand_cost * ratio, 4)
 
-            row_cost = row.get("cost", 0) or 0
-            try:
-                total_cost += float(row_cost)
-            except (TypeError, ValueError):
-                pass
+            profit_rate = round(_calc_profit_rate(new_sp, calc_brand) * 100, 1)
+            st.caption(
+                f"成本 {calc_cost:.2f} 元  |  品牌成本 {calc_brand:.2f}  |  "
+                f"利润率 {profit_rate:.1f}%"
+            )
 
-            # Brand cost: factory-basis costs (only meaningful in store basis)
-            if basis_t4 == "store":
-                item_name = str(row.get("item", "")).strip()
-                brand_cost_total += factory_cost_map.get(item_name, 0) or 0
+            if level == 1:
+                if semi_item and semi_store_cost > 0 and semi_spec > 0:
+                    total_cost += round(semi_usage_qty * (semi_store_cost / semi_spec), 4)
+                    brand_cost_total += round(semi_usage_qty * (semi_brand_cost / semi_spec), 4)
+                semi_item = item_name
+                semi_spec = _parse_spec(spec_str) or 1.0
+                semi_usage_qty = usage_qty
+                semi_store_cost = 0.0
+                semi_brand_cost = 0.0
+            elif level == 2 and semi_item:
+                semi_store_cost += calc_cost
+                semi_brand_cost += calc_brand
+            else:
+                # Level 0 (direct material): already at SKU scale
+                total_cost += calc_cost
+                brand_cost_total += calc_brand
+
+        if semi_item and semi_store_cost > 0 and semi_spec > 0:
+            total_cost += round(semi_usage_qty * (semi_store_cost / semi_spec), 4)
+            brand_cost_total += round(semi_usage_qty * (semi_brand_cost / semi_spec), 4)
 
         brand_profit = total_cost - brand_cost_total if basis_t4 == "store" else 0.0
 
         # ── Pricing & margin KPI cards ──────────────────────────────
-        default_price = float(sku_df[sku_df["product_key"] == selected_sku]["price"].iloc[0]) if not sku_df[sku_df["product_key"] == selected_sku].empty else 0.0
+        default_price = float(
+            sku_df[sku_df["product_key"] == selected_sku]["price"].iloc[0]
+        ) if not sku_df[sku_df["product_key"] == selected_sku].empty else 0.0
         price_key = f"t4_sku_price_{selected_sku}"
         current_price = st.session_state.get(price_key, default_price)
 
         show_brand = basis_t4 == "store"
         cols = st.columns(4 if show_brand else 3)
         with cols[0]:
-            new_price = st.number_input("门店售价（元）", value=float(current_price), step=1.0, min_value=0.0, key=f"t4_price_{selected_sku}")
+            new_price = st.number_input(
+                "门店售价（元）",
+                value=float(current_price),
+                step=1.0,
+                min_value=0.0,
+                key=f"t4_price_{selected_sku}",
+            )
             st.session_state[price_key] = new_price
         with cols[1]:
-            gross_profit = new_price - total_cost
             st.metric("总成本（元）", f"{total_cost:.2f}")
         if show_brand:
             with cols[2]:
-                st.metric("品牌成本（元）", f"{brand_cost_total:.2f}", delta=f"品牌利润 {brand_profit:.2f}")
+                st.metric(
+                    "品牌成本（元）",
+                    f"{brand_cost_total:.2f}",
+                    delta=f"品牌利润 {brand_profit:.2f}",
+                )
             with cols[3]:
-                margin_rate = (gross_profit / new_price * 100) if new_price > 0 else 0
-                st.metric("毛利", f"{gross_profit:.2f} 元", delta=f"{margin_rate:.1f}%")
+                margin_rate = (new_price - total_cost) / new_price * 100 if new_price > 0 else 0
+                st.metric(
+                    "毛利",
+                    f"{new_price - total_cost:.2f} 元",
+                    delta=f"{margin_rate:.1f}%",
+                )
         else:
             with cols[2]:
-                margin_rate = (gross_profit / new_price * 100) if new_price > 0 else 0
-                st.metric("毛利", f"{gross_profit:.2f} 元", delta=f"{margin_rate:.1f}%")
+                margin_rate = (new_price - total_cost) / new_price * 100 if new_price > 0 else 0
+                st.metric(
+                    "毛利",
+                    f"{new_price - total_cost:.2f} 元",
+                    delta=f"{margin_rate:.1f}%",
+                )
 
         # ── Cost breakdown charts ────────────────────────────────────
         st.divider()
@@ -960,13 +986,24 @@ with tab3:
 
         with col_chart1:
             # SKU cost breakdown: donut chart
-            sku_chart_rows = [r for r in recalc_data if r.get("level") != 2 and float(r.get("cost", 0) or 0) > 0]
-            if sku_chart_rows:
-                sku_df = pd.DataFrame([
-                    {"项目": r["item"], "成本": float(r["cost"])} for r in sku_chart_rows
-                ])
+            cost_data = []
+            for _, r in recipe_rows[recipe_rows["level"] != 2].iterrows():
+                item = str(r.get("item", "")).strip()
+                sp_key = f"sp_{selected_sku.replace('|', '_')}_{item}"
+                new_sp = st.session_state.get(sp_key, float(r.get("store_price", 0) or 0))
+                usage_qty = float(r.get("usage_qty", 0) or 0)
+                spec_p = _parse_spec(str(r.get("spec", "") or ""))
+                if basis_t4 == "store" and spec_p and spec_p > 0 and usage_qty > 0:
+                    cost_val = round(usage_qty * (new_sp / spec_p), 4)
+                else:
+                    cost_val = float(r.get("cost", 0) or 0)
+                if cost_val > 0:
+                    cost_data.append({"项目": item, "成本": cost_val})
+
+            if cost_data:
+                sku_chart_df = pd.DataFrame(cost_data)
                 colors1 = ["#1a1a1a", "#94c1ff", "#82e0aa", "#a9cce3", "#f4b8d0", "#d4a8e0"]
-                fig1 = px.pie(sku_df, values="成本", names="项目", title=None, hole=0.55,
+                fig1 = px.pie(sku_chart_df, values="成本", names="项目", title=None, hole=0.55,
                               color_discrete_sequence=colors1)
                 fig1.update_traces(textposition="outside", textinfo="percent",
                                    showlegend=True, legendgroup="sku",
@@ -984,13 +1021,18 @@ with tab3:
 
         with col_chart2:
             # Semi-product cost breakdown: donut chart
-            sub_rows = [r for r in recalc_data if r.get("level") == 2 and float(r.get("cost", 0) or 0) > 0]
-            if sub_rows:
-                semi_df = pd.DataFrame([
-                    {"项目": r["item"], "成本": float(r["cost"])} for r in sub_rows
-                ])
+            sub_df = recipe_df[recipe_df["level"] == 2].copy()
+            if not sub_df.empty:
+                semi_data = []
+                for _, r in sub_df.iterrows():
+                    item = str(r.get("item", "")).replace("↳ ", "")
+                    cost_val = float(r.get("cost", 0) or 0)
+                    if cost_val > 0:
+                        semi_data.append({"项目": item, "成本": cost_val})
+                semi_chart_df = pd.DataFrame(semi_data)
+                semi_chart_df = pd.DataFrame(semi_data)
                 colors2 = ["#94c1ff", "#82e0aa", "#a9cce3", "#f4b8d0", "#d4a8e0"]
-                fig2 = px.pie(semi_df, values="成本", names="项目", title=None, hole=0.55,
+                fig2 = px.pie(semi_chart_df, values="成本", names="项目", title=None, hole=0.55,
                               color_discrete_sequence=colors2)
                 fig2.update_traces(textposition="outside", textinfo="percent",
                                    showlegend=True,
@@ -1018,18 +1060,12 @@ with tab3:
             st.write("")
             if st.button("保存方案", use_container_width=True):
                 adjustments = []
-                for row in recalc_data:
-                    if row.get("level") == 2:
-                        continue
-                    sp = row.get("store_price")
-                    name = str(row.get("item", "")).strip()
-                    if name and sp is not None:
-                        try:
-                            sp_f = float(sp)
-                            if sp_f > 0:
-                                adjustments.append(MaterialPriceAdjustment(item=name, new_unit_price=sp_f))
-                        except (TypeError, ValueError):
-                            pass
+                for _, r in recipe_rows[recipe_rows["level"] != 2].iterrows():
+                    item = str(r.get("item", "")).strip()
+                    sp_key = f"sp_{selected_sku.replace('|', '_')}_{item}"
+                    sp = st.session_state.get(sp_key, float(r.get("store_price", 0) or 0))
+                    if item and sp > 0:
+                        adjustments.append(MaterialPriceAdjustment(item=item, new_unit_price=sp))
                 if scenario_name and adjustments:
                     store.put(Scenario(name=scenario_name, adjustments=tuple(adjustments)))
                     st.success(f"方案「{scenario_name}」已保存")
