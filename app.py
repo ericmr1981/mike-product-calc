@@ -858,17 +858,6 @@ with tab3:
         st.markdown("##### 配方明细 — 直接调整原料门店价格")
         st.caption("修改下方数值，立即看到成本与毛利变化")
 
-        # Clear stale widget state when basis changes
-        basis_state_key = f"_basis_{selected_sku.replace('|', '_')}"
-        if basis_state_key not in st.session_state:
-            st.session_state[basis_state_key] = basis_t4
-        elif st.session_state[basis_state_key] != basis_t4:
-            prefix = f"sp_{selected_sku.replace('|', '_')}_"
-            stale = [k for k in st.session_state.keys() if k.startswith(prefix)]
-            for k in stale:
-                del st.session_state[k]
-            st.session_state[basis_state_key] = basis_t4
-
         recipe_rows = recipe_df.copy()
 
         total_cost = 0.0
@@ -889,7 +878,7 @@ with tab3:
             spec_str = str(row.get("spec", "") or "")
             brand_cost = float(row.get("brand_cost", 0) or 0)
             level = int(row.get("level", 0))
-            sp_key = f"sp_{selected_sku.replace('|', '_')}_{item_name}"
+            sp_key = f"sp_{basis_t4}_{selected_sku.replace('|', '_')}_{item_name}"
 
             st.markdown(f"**{item_name}**  用量 {usage_qty} | 规格 {spec_str}")
             new_sp = st.number_input(
@@ -989,7 +978,7 @@ with tab3:
             cost_data = []
             for _, r in recipe_rows[recipe_rows["level"] != 2].iterrows():
                 item = str(r.get("item", "")).strip()
-                sp_key = f"sp_{selected_sku.replace('|', '_')}_{item}"
+                sp_key = f"sp_{basis_t4}_{selected_sku.replace('|', '_')}_{item}"
                 new_sp = st.session_state.get(sp_key, float(r.get("store_price", 0) or 0))
                 usage_qty = float(r.get("usage_qty", 0) or 0)
                 spec_p = _parse_spec(str(r.get("spec", "") or ""))
@@ -1062,7 +1051,7 @@ with tab3:
                 adjustments = []
                 for _, r in recipe_rows[recipe_rows["level"] != 2].iterrows():
                     item = str(r.get("item", "")).strip()
-                    sp_key = f"sp_{selected_sku.replace('|', '_')}_{item}"
+                    sp_key = f"sp_{basis_t4}_{selected_sku.replace('|', '_')}_{item}"
                     sp = st.session_state.get(sp_key, float(r.get("store_price", 0) or 0))
                     if item and sp > 0:
                         adjustments.append(MaterialPriceAdjustment(item=item, new_unit_price=sp))
