@@ -892,8 +892,8 @@ with tab3:
             # Proportional: store cost scales with store_price change
             ratio = (new_sp / orig_sp) if (basis_t4 == "store" and orig_sp > 0 and new_sp > 0 and new_sp != orig_sp and orig_cost > 0) else 1.0
             calc_cost = round(orig_cost * ratio, 4)
-            # Brand cost = calc_cost × (brand_price / store_price) at same scale
-            calc_brand = round(calc_cost * (brand_cost / orig_sp), 4) if orig_sp > 0 else round(brand_cost * ratio, 4)
+            # Brand cost = ALWAYS based on original prices (加价前单价), never scaled
+            calc_brand = round(orig_cost * (brand_cost / orig_sp), 4) if orig_sp > 0 else brand_cost
 
             profit_rate = round(_calc_profit_rate(new_sp, calc_brand) * 100, 1)
             st.caption(
