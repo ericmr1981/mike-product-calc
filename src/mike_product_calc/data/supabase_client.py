@@ -163,18 +163,41 @@ class MpcSupabaseClient:
         return resp.json()
 
     def set_recipes(self, product_id: str, recipes_data: list[dict]) -> list[dict]:
-        """Replace all recipes for a product: delete existing, insert new."""
-        # Delete existing recipes (and cascade sub-records)
-        requests.delete(
+        """Replace all recipes for a product: delete existing, insert new.
+
+        Preserves old data to restore on failure (pseudo-transaction).
+        """
+        # Save old recipes before delete
+        old = self.list_recipes(product_id)
+
+        # Delete existing recipes
+        del_resp = requests.delete(
             f"{self._base}/recipes?product_id=eq.{product_id}",
             headers=self._headers(),
         )
+        del_resp.raise_for_status()
 
-        # 4. POST new recipes
+        # POST new recipes
+        # Convert numeric fields from string to float (Supabase API returns strings)
+        cleaned = []
+        for r in recipes_data:
+            cleaned.append({
+                **r,
+                "quantity": float(r["quantity"]),
+                "unit_cost": float(r["unit_cost"]) if r.get("unit_cost") is not None else None,
+                "store_unit_cost": float(r["store_unit_cost"]) if r.get("store_unit_cost") is not None else None,
+            })
+
         resp = requests.post(
-            f"{self._base}/recipes", headers=self._headers(), json=recipes_data
+            f"{self._base}/recipes", headers=self._headers(), json=cleaned
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            # Restore old data on failure
+            if old:
+                requests.post(
+                    f"{self._base}/recipes", headers=self._headers(), json=old
+                )
+            resp.raise_for_status()
         return resp.json()
 
     # ------------------------------------------------------------------
