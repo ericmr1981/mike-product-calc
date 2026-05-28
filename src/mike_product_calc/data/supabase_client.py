@@ -6,6 +6,9 @@ Uses ``requests`` (not supabase-py) to call the Supabase REST API directly.
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime
+
 import requests
 
 
@@ -199,6 +202,133 @@ class MpcSupabaseClient:
                 )
             resp.raise_for_status()
         return resp.json()
+
+    # ------------------------------------------------------------------
+    # Price Scenario Apply & History
+    # ------------------------------------------------------------------
+
+    def _find_material_by_name(self, name: str) -> dict | None:
+        """Find a raw_material by exact name match."""
+        all_mats = self.list_raw_materials()
+        for m in all_mats:
+            if str(m.get("name", "")).strip() == name.strip():
+                return m
+        return None
+
+    def apply_scenario(
+        self, scenario_name: str, adjustments: list
+    ) -> dict:
+        """Apply a scenario's price adjustments to raw_materials.
+
+        adjustments: list of objects with .item (name) and .new_unit_price
+        Returns {batch_id, total, ok, changes[]}.
+        """
+        batch_id = str(uuid.uuid4())
+        changes = []
+        ok_count = 0
+        for adj in adjustments:
+            mat = self._find_material_by_name(adj.item)
+            if not mat:
+                changes.append({"item": adj.item, "status": "not_found"})
+                continue
+            old_price = float(mat.get("final_price") or 0)
+            new_price = float(adj.new_unit_price)
+            try:
+                self.update_raw_material(mat["id"], {"final_price": new_price})
+            except requests.HTTPError:
+                changes.append(
+                    {"item": adj.item, "old": old_price, "status": "update_failed"}
+                )
+                continue
+            log_entry = {
+                "batch_id": batch_id,
+                "material_name": adj.item,
+                "material_code": mat.get("code", ""),
+                "old_final_price": old_price,
+                "new_final_price": new_price,
+                "scenario_name": scenario_name,
+            }
+            requests.post(
+                f"{self._base}/price_change_log",
+                headers=self._headers(),
+                json=[log_entry],
+            )
+            changes.append(
+                {"item": adj.item, "old": old_price, "new": new_price, "status": "ok"}
+            )
+            ok_count += 1
+        return {
+            "batch_id": batch_id,
+            "total": len(adjustments),
+            "ok": ok_count,
+            "changes": changes,
+        }
+
+    def rollback_batch(self, batch_id: str, reason: str = "") -> dict:
+        """Rollback all price changes in a batch."""
+        entries = self.query_table_where(
+            "price_change_log",
+            {"batch_id": f"eq.{batch_id}", "rolled_back_at": "is.null"},
+        )
+        rolled = 0
+        for entry in entries:
+            mat = self._find_material_by_name(entry["material_name"])
+            if mat:
+                try:
+                    self.update_raw_material(
+                        mat["id"], {"final_price": entry["old_final_price"]}
+                    )
+                    rolled += 1
+                except requests.HTTPError:
+                    pass
+        if entries:
+            now_str = datetime.utcnow().isoformat()
+            requests.patch(
+                f"{self._base}/price_change_log?batch_id=eq.{batch_id}",
+                headers=self._headers(),
+                json={"rolled_back_at": now_str, "rollback_reason": reason},
+            )
+        return {"batch_id": batch_id, "rolled_back": rolled}
+
+    def list_price_change_batches(self) -> list[dict]:
+        """List all batches with summary stats."""
+        resp = requests.get(
+            f"{self._base}/price_change_log",
+            headers=self._headers(),
+            params={
+                "select": "batch_id,scenario_name,applied_at,rolled_back_at,material_name",
+                "order": "applied_at.desc",
+            },
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        batches: dict[str, dict] = {}
+        for r in rows:
+            bid = r["batch_id"]
+            if bid not in batches:
+                batches[bid] = {
+                    "batch_id": bid,
+                    "scenario_name": r["scenario_name"],
+                    "applied_at": r["applied_at"],
+                    "item_count": 0,
+                    "rolled_back_count": 0,
+                }
+            batches[bid]["item_count"] += 1
+            if r.get("rolled_back_at"):
+                batches[bid]["rolled_back_count"] += 1
+        result = sorted(
+            batches.values(), key=lambda b: b["applied_at"], reverse=True
+        )
+        for b in result:
+            b["all_rolled_back"] = b["rolled_back_count"] == b["item_count"]
+        return result
+
+    def get_batch_details(self, batch_id: str) -> list[dict]:
+        """Get all log entries for a batch."""
+        return self.query_table_where(
+            "price_change_log",
+            {"batch_id": f"eq.{batch_id}", "order": "material_name"},
+        )
 
     # ------------------------------------------------------------------
     # Serving Specs

@@ -895,7 +895,7 @@ with tab3:
             # Brand cost = ALWAYS based on original prices (加价前单价), never scaled
             calc_brand = round(orig_cost * (brand_cost / orig_sp), 4) if orig_sp > 0 else brand_cost
 
-            profit_rate = round(_calc_profit_rate(new_sp, calc_brand) * 100, 1)
+            profit_rate = round(_calc_profit_rate(new_sp, brand_cost) * 100, 1)
             st.caption(
                 f"成本 {calc_cost:.2f} 元  |  品牌成本 {calc_brand:.2f}  |  "
                 f"利润率 {profit_rate:.1f}%"
@@ -1070,6 +1070,76 @@ with tab3:
                 sc = store.get(nm)
                 adj_list = [f"{a.item} → {a.new_unit_price}" for a in (sc.adjustments if sc else [])]
                 st.markdown(f"**{nm}**（{len(adj_list)} 项调价）：{', '.join(adj_list) if adj_list else '（无调整）'}")
+
+                # Apply to database
+                _supa: MpcSupabaseClient | None = st.session_state.get("supabase_client")
+                if _supa:
+                    col_a, col_p = st.columns([1, 1])
+                    with col_p:
+                        if st.button("📋 预览影响", key=f"preview_{nm}"):
+                            pv = pd.DataFrame([
+                                {"原料": a.item, "新门店价格": a.new_unit_price}
+                                for a in (sc.adjustments if sc else [])
+                            ])
+                            st.dataframe(pv, hide_index=True, use_container_width=True)
+                    with col_a:
+                        with st.popover("⬇ 应用到原料库", key=f"apply_pop_{nm}"):
+                            st.markdown(f"### 确认应用方案「{nm}」")
+                            st.write(f"将更新 **{len(sc.adjustments)}** 项原料的门店价格：")
+                            cf = pd.DataFrame([
+                                {"原料": a.item, "新门店价格": a.new_unit_price}
+                                for a in (sc.adjustments if sc else [])
+                            ])
+                            st.dataframe(cf, hide_index=True, use_container_width=True)
+                            if st.button("确认应用", key=f"confirm_{nm}", type="primary"):
+                                result = _supa.apply_scenario(nm, list(sc.adjustments or []))
+                                if result["ok"] > 0:
+                                    st.success(f"已更新 {result['ok']}/{result['total']} 项原料")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                for c in result["changes"]:
+                                    if c.get("status") == "not_found":
+                                        st.warning(f"未找到原料「{c['item']}」")
+
+            # ── Price change history ──
+            st.divider()
+            st.markdown("##### 价格变更记录")
+            _supa2: MpcSupabaseClient | None = st.session_state.get("supabase_client")
+            if _supa2:
+                batches = _supa2.list_price_change_batches()
+                if batches:
+                    for b in batches[:10]:
+                        with st.container():
+                            c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+                            with c1:
+                                st.markdown(f"**{b['scenario_name']}**")
+                                st.caption(b["applied_at"][:16] if b["applied_at"] else "")
+                            with c2:
+                                st.text(f"{b['item_count']} 项")
+                            with c3:
+                                st.text("已回滚" if b["all_rolled_back"] else "生效中")
+                            with c4:
+                                if st.button("查看", key=f"vb_{b['batch_id']}"):
+                                    st.session_state[f"_vb_{b['batch_id']}"] = True
+                                if not b["all_rolled_back"] and st.button("回滚", key=f"rb_{b['batch_id']}"):
+                                    _supa2.rollback_batch(b["batch_id"], "用户手动回滚")
+                                    st.success("已回滚")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                            if st.session_state.get(f"_vb_{b['batch_id']}", False):
+                                details = _supa2.get_batch_details(b["batch_id"])
+                                dd = pd.DataFrame([
+                                    {
+                                        "原料": d["material_name"],
+                                        "旧价格": float(d["old_final_price"]),
+                                        "新价格": float(d["new_final_price"]),
+                                        "回滚": "是" if d.get("rolled_back_at") else "否",
+                                    }
+                                    for d in details
+                                ])
+                                st.dataframe(dd, hide_index=True, use_container_width=True)
+                else:
+                    st.caption("暂无价格变更记录。")
 
             if len(names) >= 2:
                 st.divider()
