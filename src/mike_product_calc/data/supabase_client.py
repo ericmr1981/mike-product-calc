@@ -208,12 +208,16 @@ class MpcSupabaseClient:
     # ------------------------------------------------------------------
 
     def _find_material_by_name(self, name: str) -> dict | None:
-        """Find a raw_material by exact name match."""
+        """Find a raw_material by exact name match, preferring newest."""
         all_mats = self.list_raw_materials()
-        for m in all_mats:
-            if str(m.get("name", "")).strip() == name.strip():
-                return m
-        return None
+        matches = [
+            m for m in all_mats
+            if str(m.get("name", "")).strip() == name.strip()
+        ]
+        if not matches:
+            return None
+        matches.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return matches[0]
 
     def apply_scenario(
         self, scenario_name: str, adjustments: list

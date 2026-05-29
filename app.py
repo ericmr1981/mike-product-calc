@@ -1053,9 +1053,10 @@ with tab3:
                 for _, r in recipe_rows[recipe_rows["level"] != 2].iterrows():
                     item = str(r.get("item", "")).strip()
                     lvl = int(r.get("level", 0))
+                    orig_sp = float(r.get("store_price", 0) or 0)
                     sp_key = f"sp_{basis_t4}_{selected_sku.replace('|', '_')}_{lvl}_{item}"
-                    sp = st.session_state.get(sp_key, float(r.get("store_price", 0) or 0))
-                    if item and sp > 0:
+                    sp = st.session_state.get(sp_key, orig_sp)
+                    if item and sp > 0 and abs(sp - orig_sp) > 0.0001:
                         adjustments.append(MaterialPriceAdjustment(item=item, new_unit_price=sp))
                 if scenario_name and adjustments:
                     store.put(Scenario(name=scenario_name, adjustments=tuple(adjustments)))
