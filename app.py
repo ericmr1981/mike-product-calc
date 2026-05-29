@@ -835,7 +835,6 @@ with tab3:
     st.markdown(f"##### 配方明细 — {selected_sku.split('|')[-1] if '|' in selected_sku else selected_sku}")
 
     # Build recipe table for the selected basis
-    @st.cache_data(ttl=60, show_spinner=False)
     def _get_recipe(sku: str, basis: str) -> pd.DataFrame:
         return build_recipe_table(_st_sheets, product_key=sku, basis=basis)
 
