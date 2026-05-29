@@ -1083,7 +1083,7 @@ with tab3:
                             ])
                             st.dataframe(pv, hide_index=True, use_container_width=True)
                     with col_a:
-                        with st.popover("⬇ 应用到原料库", key=f"apply_pop_{nm}"):
+                        with st.popover("⬇ 应用到原料库"):
                             st.markdown(f"### 确认应用方案「{nm}」")
                             st.write(f"将更新 **{len(sc.adjustments)}** 项原料的门店价格：")
                             cf = pd.DataFrame([
