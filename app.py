@@ -889,39 +889,32 @@ with tab3:
                 step=0.5,
             )
 
-            # Proportional: store cost scales with store_price change
             ratio = (new_sp / orig_sp) if (basis_t4 == "store" and orig_sp > 0 and new_sp > 0 and new_sp != orig_sp and orig_cost > 0) else 1.0
             calc_cost = round(orig_cost * ratio, 4)
-            # Brand cost = ALWAYS based on original prices (加价前单价), never scaled
-            calc_brand = round(orig_cost * (brand_cost / orig_sp), 4) if orig_sp > 0 else brand_cost
 
             profit_rate = round(_calc_profit_rate(new_sp, brand_cost) * 100, 1)
             st.caption(
-                f"成本 {calc_cost:.2f} 元  |  品牌成本 {calc_brand:.2f}  |  "
+                f"成本 {calc_cost:.2f} 元  |  品牌成本 {brand_cost:.2f}  |  "
                 f"利润率 {profit_rate:.1f}%"
             )
 
             if level == 1:
                 if semi_item and semi_store_cost > 0 and semi_spec > 0:
                     total_cost += round(semi_usage_qty * (semi_store_cost / semi_spec), 4)
-                    brand_cost_total += round(semi_usage_qty * (semi_brand_cost / semi_spec), 4)
                 semi_item = item_name
                 semi_spec = _parse_spec(spec_str) or 1.0
                 semi_usage_qty = usage_qty
                 semi_store_cost = 0.0
-                semi_brand_cost = 0.0
             elif level == 2 and semi_item:
                 semi_store_cost += calc_cost
-                semi_brand_cost += calc_brand
             else:
-                # Level 0 (direct material): already at SKU scale
                 total_cost += calc_cost
-                brand_cost_total += calc_brand
 
         if semi_item and semi_store_cost > 0 and semi_spec > 0:
             total_cost += round(semi_usage_qty * (semi_store_cost / semi_spec), 4)
-            brand_cost_total += round(semi_usage_qty * (semi_brand_cost / semi_spec), 4)
 
+        # Brand cost = factory_cost_map values (correct factory costs from factory recipe)
+        brand_cost_total = sum(factory_cost_map.values()) if basis_t4 == "store" else 0.0
         brand_profit = total_cost - brand_cost_total if basis_t4 == "store" else 0.0
 
         # ── Pricing & margin KPI cards ──────────────────────────────
@@ -1019,24 +1012,26 @@ with tab3:
                     cost_val = float(r.get("cost", 0) or 0)
                     if cost_val > 0:
                         semi_data.append({"项目": item, "成本": cost_val})
-                semi_chart_df = pd.DataFrame(semi_data)
-                semi_chart_df = pd.DataFrame(semi_data)
-                colors2 = ["#94c1ff", "#82e0aa", "#a9cce3", "#f4b8d0", "#d4a8e0"]
-                fig2 = px.pie(semi_chart_df, values="成本", names="项目", title=None, hole=0.55,
-                              color_discrete_sequence=colors2)
-                fig2.update_traces(textposition="outside", textinfo="percent",
-                                   showlegend=True,
-                                   textfont=dict(color="#333", size=11),
-                                   marker=dict(line=dict(color="white", width=2)),
-                                   domain=dict(x=[0, 0.6]))
-                fig2.update_layout(
-                    height=260, margin=dict(t=10, b=10, l=0, r=0),
-                    legend=dict(orientation="v", yanchor="middle", y=0.5,
-                                xanchor="left", x=0.85, font=dict(size=11, color="#333")),
-                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                    font=dict(color="#333"),
-                )
-                st.plotly_chart(fig2, use_container_width=True)
+                if not semi_data:
+                    st.caption("无配料成本数据")
+                else:
+                    semi_chart_df = pd.DataFrame(semi_data)
+                    colors2 = ["#94c1ff", "#82e0aa", "#a9cce3", "#f4b8d0", "#d4a8e0"]
+                    fig2 = px.pie(semi_chart_df, values="成本", names="项目", title=None, hole=0.55,
+                                  color_discrete_sequence=colors2)
+                    fig2.update_traces(textposition="outside", textinfo="percent",
+                                       showlegend=True,
+                                       textfont=dict(color="#333", size=11),
+                                       marker=dict(line=dict(color="white", width=2)),
+                                       domain=dict(x=[0, 0.6]))
+                    fig2.update_layout(
+                        height=260, margin=dict(t=10, b=10, l=0, r=0),
+                        legend=dict(orientation="v", yanchor="middle", y=0.5,
+                                    xanchor="left", x=0.85, font=dict(size=11, color="#333")),
+                        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#333"),
+                    )
+                    st.plotly_chart(fig2, use_container_width=True)
 
         # ── Scenario management ──────────────────────────────────────
         st.divider()

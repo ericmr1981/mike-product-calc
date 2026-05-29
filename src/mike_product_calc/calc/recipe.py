@@ -258,12 +258,14 @@ def build_recipe_table(
                     semi_spec[nm] = sp
 
     # ── Read sub-ingredient total costs from 产品配方表 ──
-    sub_factory_cost: dict[str, float] = {}  # factory total cost (总成本)
-    sub_store_cost: dict[str, float] = {}    # store total cost (门店总成本)
+    # Keyed by (semi_product_name, ingredient_name) to avoid cross-recipe overwrites
+    sub_factory_cost: dict[tuple[str, str], float] = {}
+    sub_store_cost: dict[tuple[str, str], float] = {}
     for sname in sheets:
         if "产品配方表" not in sname:
             continue
         df = sheets[sname]
+        semi_col = _find_col(df, "品名")
         ing_col = _find_col(df, "配料")
         fc_col = _find_col(df, "总成本")
         sc_col = _find_col(df, "门店总成本")
@@ -271,16 +273,18 @@ def build_recipe_table(
             continue
         for _, row in df.iterrows():
             ing = str(row.get(ing_col, "")).strip()
+            semi = str(row.get(semi_col, "")).strip() if semi_col else ""
             if not ing or ing == "nan":
                 continue
+            key = (semi, ing)
             if fc_col:
                 try:
-                    sub_factory_cost[ing] = float(row[fc_col])
+                    sub_factory_cost[key] = float(row[fc_col])
                 except (TypeError, ValueError):
                     pass
             if sc_col:
                 try:
-                    sub_store_cost[ing] = float(row[sc_col])
+                    sub_store_cost[key] = float(row[sc_col])
                 except (TypeError, ValueError):
                     pass
 
@@ -335,11 +339,11 @@ def build_recipe_table(
                 sub_sp = store_price_map.get(sub_name, sub_bc or 0.0)
                 sub_spec = spec_map.get(sub_name, "")
 
-                # Cost = total cost from 产品配方表 (no scale_factor)
+                # Cost = total cost from 产品配方表, keyed by (semi_name, ingredient)
                 if basis == "store":
-                    sub_row_cost = sub_store_cost.get(sub_name, 0.0)
+                    sub_row_cost = sub_store_cost.get((item, sub_name), 0.0)
                 else:
-                    sub_row_cost = sub_factory_cost.get(sub_name, 0.0)
+                    sub_row_cost = sub_factory_cost.get((item, sub_name), 0.0)
 
                 sub_profit_rate = round(
                     _calc_profit_rate(sub_sp or sub_bc or 0.0, sub_bc or 0.0) * 100, 1
