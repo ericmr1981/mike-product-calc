@@ -1050,7 +1050,7 @@ with tab3:
                     orig_sp = float(r.get("store_price", 0) or 0)
                     sp_key = f"sp_{basis_t4}_{selected_sku.replace('|', '_')}_{lvl}_{item}"
                     sp = st.session_state.get(sp_key, orig_sp)
-                    if item and sp > 0 and abs(sp - orig_sp) > 0.0001:
+                    if item and sp > 0:
                         adjustments.append(MaterialPriceAdjustment(item=item, new_unit_price=sp))
                 if scenario_name and adjustments:
                     store.put(Scenario(name=scenario_name, adjustments=tuple(adjustments)))
