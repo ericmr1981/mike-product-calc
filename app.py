@@ -36,6 +36,7 @@ from mike_product_calc.calc.profit import sku_profit_table
 from mike_product_calc.calc.recipe import build_recipe_table, _parse_spec, _calc_profit_rate
 from mike_product_calc.calc.recipe_mgmt import get_product_with_recipes, build_ingredient_pool
 from mike_product_calc.calc.serving_mgmt import get_final_products
+from mike_product_calc.data import DataService
 from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.model.production import ProductionRow
 from mike_product_calc.sync import excel_sync as _excel_sync
@@ -443,17 +444,8 @@ def _get_supabase_credentials() -> tuple[str, str]:
     return url, key
 
 
-def _hydrate_cache(client) -> None:
-    """Load commonly used datasets into session cache."""
-    st.session_state.supabase = client
-    st.session_state.cached_raw_materials = client.list_raw_materials()
-    st.session_state.cached_products = client.list_products()
-    st.session_state.cached_all_recipes = client.list_all_recipes()
-    st.session_state.cached_all_specs = client.list_all_serving_specs()
-    st.session_state.cache_loaded_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
 _st_supa = None
+_st_data_service: DataService | None = None
 _st_sheets: dict[str, pd.DataFrame] = {}
 _st_supabase_ok = False
 
@@ -465,15 +457,8 @@ try:
     supabase_url, supabase_key = _get_supabase_credentials()
     from mike_product_calc.data.supabase_client import MpcSupabaseClient
     _st_supa = MpcSupabaseClient(supabase_url, supabase_key)
-    from mike_product_calc.data.supabase_adapter import build_sheets
-
-    @st.cache_data(ttl=300, show_spinner="加载数据中...")
-    def _cached_build_sheets(url: str, key: str) -> dict[str, pd.DataFrame]:
-        """Cached wrapper: rebuilds every 5 min or when Supabase data changes."""
-        _c = MpcSupabaseClient(url, key)
-        return build_sheets(_c)
-
-    _st_sheets = _cached_build_sheets(supabase_url, supabase_key)
+    _st_data_service = DataService(supabase_client=_st_supa)
+    _st_sheets = _st_data_service.get_sheets()
     _st_supabase_ok = True
 except Exception as _e:
     if not _saved_sheets:
@@ -482,8 +467,14 @@ except Exception as _e:
     else:
         _st_sheets = _saved_sheets
 
+st.session_state.data_service = _st_data_service
 st.session_state.supabase_client = _st_supa
 st.session_state.sheets = _st_sheets
+
+# Track supabase client and cached data in session state (backward compat)
+if _st_supabase_ok:
+    st.session_state.supabase = _st_supa
+    st.session_state.cache_loaded_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 # ── If Supabase unavailable and no saved xlsx, offer xlsx upload ──
 if _force_upload:
@@ -505,25 +496,22 @@ if _force_upload:
                 Path(tmp.name).unlink(missing_ok=True)
     st.stop()  # Don't render tabs until data is loaded
 
-# Track supabase client and cached data in session state
-if "supabase" not in st.session_state and _st_supabase_ok:
-    _hydrate_cache(_st_supa)
-
 with st.sidebar:
     st.subheader("操作中心")
     st.caption("更快地查看当前数据状态并执行常用刷新操作。")
     if _st_supabase_ok:
         if st.button("刷新 Supabase 缓存", width="stretch"):
             with st.spinner("正在刷新缓存..."):
-                st.cache_data.clear()
-                _hydrate_cache(st.session_state.supabase)
+                _st_data_service.invalidate_all()
+                st.session_state.sheets = _st_data_service.get_sheets()
+                st.session_state.cache_loaded_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             st.success("缓存已刷新")
             st.rerun()
 
         st.markdown("#### 当前状态")
-        st.metric("原料数", len(st.session_state.cached_raw_materials))
-        st.metric("产品数", len(st.session_state.cached_products))
-        st.metric("规格数", len(st.session_state.cached_all_specs))
+        st.metric("原料数", len(_st_data_service.get_raw_materials()))
+        st.metric("产品数", len(_st_data_service.get_products()))
+        st.metric("规格数", len(_st_data_service.get_all_serving_specs()))
         st.caption(f"最近加载时间：{st.session_state.get('cache_loaded_at', 'N/A')}")
     else:
         st.info("使用本地 Excel 文件，Supabase 功能不可用。")
@@ -633,12 +621,13 @@ with tab1:
     _heading_with_help("运营控制台概览",
         "📌 **功能说明**：风险优先、经营次级、动作导向。\n"
         "**数据源**：Supabase (PostgreSQL) + 库存快照视图")
-    _rm = st.session_state.cached_raw_materials
-    _prods_c = st.session_state.cached_products
+    _ds = st.session_state.data_service
+    _rm = _ds.get_raw_materials()
+    _prods_c = _ds.get_products()
     _stats = {"total": len(_rm), "active": sum(1 for m in _rm if m.get("status") in (STATUS_ACTIVE, "已生效")), "inactive": sum(1 for m in _rm if m.get("status") not in (STATUS_ACTIVE, "已生效")), "by_category": {}}
     _final = sum(1 for p in _prods_c if p.get("is_final_product"))
-    _specs_count = len(st.session_state.cached_all_specs)
-    _risk = _collect_inventory_risk(_st_supa)
+    _specs_count = len(_ds.get_all_serving_specs())
+    _risk = _collect_inventory_risk(_ds.client)
 
     st.markdown('<div class="overview-section-title">风险区</div>', unsafe_allow_html=True)
     if not _risk["ready"]:
@@ -721,7 +710,7 @@ with tab2:
     _sel_table = st.selectbox("选择表", options=list(_table_names.keys()),
         format_func=lambda x: f"{_table_names.get(x, x)} ({x})")
     try:
-        _table_data = _st_supa.query_table(_sel_table, limit=200)
+        _table_data = st.session_state.data_service.query_table(_sel_table, limit=200)
         if _table_data:
             st.dataframe(pd.DataFrame(_table_data), use_container_width=True, height=420, hide_index=True)
         else:
@@ -741,8 +730,9 @@ with tab3:
         "**使用方法**：选择产品 → 选 SKU 规格 → 在配方表中调整门店价格或在右侧调售价 → 保存方案对比。")
     st.caption("三步递进：选择产品 → SKU 规格毛利 → 配方明细与调价")
 
-    # ── Data source: Supabase ──
-    _sheets = _st_sheets
+    # ── Data source: DataService ──
+    _ds_t3 = st.session_state.data_service
+    _sheets = _ds_t3.get_sheets()
 
     # ── Step 1: Select product ──────────────────────────────────────
     all_profit = sku_profit_table(_sheets, basis="store", only_status=None)
@@ -836,7 +826,7 @@ with tab3:
 
     # Build recipe table for the selected basis
     def _get_recipe(sku: str, basis: str) -> pd.DataFrame:
-        return build_recipe_table(_st_sheets, product_key=sku, basis=basis)
+        return build_recipe_table(_ds_t3.get_sheets(), product_key=sku, basis=basis)
 
     recipe_df = _get_recipe(selected_sku, basis_t4)
     # Build factory-basis recipe for brand cost (only needed when current basis is store)
@@ -1069,9 +1059,8 @@ with tab3:
                 adj_list = [f"{a.item} → {a.new_unit_price}" for a in (sc.adjustments if sc else [])]
                 st.markdown(f"**{nm}**（{len(adj_list)} 项调价）：{', '.join(adj_list) if adj_list else '（无调整）'}")
 
-                # Apply to database
-                _supa: MpcSupabaseClient | None = st.session_state.get("supabase_client")
-                if _supa:
+                # Apply to database (via DataService)
+                if _ds_t3.is_connected:
                     col_a, col_p = st.columns([1, 1])
                     with col_p:
                         if st.button("📋 预览影响", key=f"preview_{nm}"):
@@ -1090,78 +1079,76 @@ with tab3:
                             ])
                             st.dataframe(cf, hide_index=True, use_container_width=True)
                             if st.button("确认应用", key=f"confirm_{nm}", type="primary"):
-                                result = _supa.apply_scenario(nm, list(sc.adjustments or []))
+                                result = _ds_t3.apply_scenario(nm, list(sc.adjustments or []))
                                 if result["ok"] > 0:
                                     st.success(f"已更新 {result['ok']}/{result['total']} 项原料")
-                                    st.cache_data.clear()
                                     st.rerun()
                                 for c in result["changes"]:
                                     if c.get("status") == "not_found":
                                         st.warning(f"未找到原料「{c['item']}」")
 
-            # ── Price change history ──
-            st.divider()
-            st.markdown("##### 价格变更记录")
-            _supa2: MpcSupabaseClient | None = st.session_state.get("supabase_client")
-            if _supa2:
-                batches = _supa2.list_price_change_batches()
-                if batches:
-                    for b in batches[:10]:
-                        with st.container():
-                            c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-                            with c1:
-                                st.markdown(f"**{b['scenario_name']}**")
-                                st.caption(b["applied_at"][:16] if b["applied_at"] else "")
-                            with c2:
-                                st.text(f"{b['item_count']} 项")
-                            with c3:
-                                st.text("已回滚" if b["all_rolled_back"] else "生效中")
-                            with c4:
-                                if st.button("查看", key=f"vb_{b['batch_id']}"):
-                                    st.session_state[f"_vb_{b['batch_id']}"] = True
-                                if not b["all_rolled_back"] and st.button("回滚", key=f"rb_{b['batch_id']}"):
-                                    _supa2.rollback_batch(b["batch_id"], "用户手动回滚")
-                                    st.success("已回滚")
-                                    st.cache_data.clear()
-                                    st.rerun()
-                            if st.session_state.get(f"_vb_{b['batch_id']}", False):
-                                details = _supa2.get_batch_details(b["batch_id"])
-                                dd = pd.DataFrame([
-                                    {
-                                        "原料": d["material_name"],
-                                        "旧价格": float(d["old_final_price"]),
-                                        "新价格": float(d["new_final_price"]),
-                                        "回滚": "是" if d.get("rolled_back_at") else "否",
-                                    }
-                                    for d in details
-                                ])
-                                st.dataframe(dd, hide_index=True, use_container_width=True)
-                else:
-                    st.caption("暂无价格变更记录。")
+        # ── Price change history ──
+        st.divider()
+        st.markdown("##### 价格变更记录")
+        if _ds_t3.is_connected:
+            batches = _ds_t3.list_price_change_batches()
+            if batches:
+                for b in batches[:10]:
+                    with st.container():
+                        c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+                        with c1:
+                            st.markdown(f"**{b['scenario_name']}**")
+                            st.caption(b["applied_at"][:16] if b["applied_at"] else "")
+                        with c2:
+                            st.text(f"{b['item_count']} 项")
+                        with c3:
+                            st.text("已回滚" if b["all_rolled_back"] else "生效中")
+                        with c4:
+                            if st.button("查看", key=f"vb_{b['batch_id']}"):
+                                st.session_state[f"_vb_{b['batch_id']}"] = True
+                            if not b["all_rolled_back"] and st.button("回滚", key=f"rb_{b['batch_id']}"):
+                                _ds_t3.rollback_batch(b["batch_id"], "用户手动回滚")
+                                st.success("已回滚")
+                                st.rerun()
+                        if st.session_state.get(f"_vb_{b['batch_id']}", False):
+                            details = _ds_t3.get_batch_details(b["batch_id"])
+                            dd = pd.DataFrame([
+                                {
+                                    "原料": d["material_name"],
+                                    "旧价格": float(d["old_final_price"]),
+                                    "新价格": float(d["new_final_price"]),
+                                    "回滚": "是" if d.get("rolled_back_at") else "否",
+                                }
+                                for d in details
+                            ])
+                            st.dataframe(dd, hide_index=True, use_container_width=True)
+            else:
+                st.caption("暂无价格变更记录。")
 
-            if len(names) >= 2:
-                st.divider()
-                st.markdown("##### 方案对比")
-                c_a, c_b = st.columns(2)
-                with c_a:
-                    va = st.selectbox("方案 A", names, key="t4_cmp_a")
-                with c_b:
-                    vb = st.selectbox("方案 B", names, index=min(1, len(names)-1), key="t4_cmp_b")
-                if va != vb and st.button("对比"):
-                    s_a, s_b = store.get(va), store.get(vb)
-                    if s_a and s_b:
-                        diff = compare_scenarios(s_a, s_b, _sheets, basis=basis_t4)
-                        st.dataframe(diff, use_container_width=True, height=420, hide_index=True)
+        if len(names) >= 2:
+            st.divider()
+            st.markdown("##### 方案对比")
+            c_a, c_b = st.columns(2)
+            with c_a:
+                va = st.selectbox("方案 A", names, key="t4_cmp_a")
+            with c_b:
+                vb = st.selectbox("方案 B", names, index=min(1, len(names)-1), key="t4_cmp_b")
+            if va != vb and st.button("对比"):
+                s_a, s_b = store.get(va), store.get(vb)
+                if s_a and s_b:
+                    diff = compare_scenarios(s_a, s_b, _ds_t3.get_sheets(), basis=basis_t4)
+                    st.dataframe(diff, use_container_width=True, height=420, hide_index=True)
 # ── Tab5: 产销计划 ────────────────────────────────────────────────────
 
 # Build SKU list from Supabase
-_profit_df = sku_profit_table(_st_sheets, basis="factory", only_status=None)
+_ds_t4_top = st.session_state.data_service
+_profit_df = sku_profit_table(_ds_t4_top.get_sheets(), basis="factory", only_status=None)
 _all_skus = sorted(_profit_df["product_key"].dropna().unique().tolist())
 
 # Production SKU pool: extract from already-built sheets (no extra API calls)
 _production_skus_set: set[str] = set()
 for _sn in ("产品配方表_Gelato", "产品出品表_Gelato"):
-    _df = _st_sheets.get(_sn)
+    _df = _ds_t4_top.get_sheets().get(_sn)
     if _df is not None:
         for _col in ("品名", "配料"):
             if _col in _df.columns:
@@ -1332,10 +1319,11 @@ with tab4:
     st.subheader("🏭 Step 2: 生产计划")
     st.caption("从销售计划生成后可直接编辑，也可手动录入调整")
 
+    _ds_t4 = st.session_state.data_service
     linkage_inventory_rows: list[dict] = []
     linkage_inventory_error: Optional[str] = None
     try:
-        linkage_inventory_rows = _st_supa.list_latest_inventory_rows(limit=5000)
+        linkage_inventory_rows = _ds_t4.get_latest_inventory_rows(limit=5000)
     except Exception as _e:
         linkage_inventory_error = str(_e)
 
@@ -1381,7 +1369,7 @@ with tab4:
                 st.warning(f"⚠️ {len(no_spec_rows)} 行销售计划缺少规格信息（SKU 中无「|规格」且「规格」列为空），"
                            f"可能匹配多个出品规格导致数量偏高。建议补充规格后重新生成。")
             with st.spinner("根据配方展开生产计划…"):
-                prod_rows = sales_to_production(sales_rows, _st_sheets, lead_days=lead_days)
+                prod_rows = sales_to_production(sales_rows, _ds_t4.get_sheets(), lead_days=lead_days)
             if prod_rows:
                 plans[PROD_KEY] = prod_rows
                 st.session_state["prod_gen_version"] += 1
@@ -1391,7 +1379,7 @@ with tab4:
                         sku_qty = _build_sku_qty_from_production_rows(prod_rows)
                         immediate_end_date = max((_parse_date(r.date) for r in prod_rows), default=None)
                         preview_bom = bom_expand_multi(
-                            _st_sheets,
+                            _ds_t4.get_sheets(),
                             sku_qty,
                             order_date=immediate_end_date,
                             basis=str(st.session_state.get("bom_basis", "factory")),
@@ -1399,7 +1387,7 @@ with tab4:
                             default_loss_rate=float(st.session_state.get("bom_loss_rate", 0)) / 100.0,
                             default_safety_stock=0.0,
                         )
-                        warehouse_rows = _st_supa.list_latest_inventory_rows_by_warehouse(
+                        warehouse_rows = _ds_t4.get_latest_inventory_rows_by_warehouse(
                             selected_warehouse_code, limit=5000
                         )
                         if warehouse_rows:
@@ -1532,7 +1520,7 @@ with tab4:
                 with st.spinner("BOM 展开中…"):
                     t0 = datetime.now()
                     result = bom_expand_multi(
-                        _st_sheets, sku_qty,
+                        _ds_t4.get_sheets(), sku_qty,
                         order_date=target_date, basis=bom_basis,
                         default_lead_days=bom_lead_days,
                         default_loss_rate=bom_loss_rate,
@@ -1551,7 +1539,7 @@ with tab4:
             st.info("请先在 Step 2 选择联动仓库后查看补货计划。")
         else:
             try:
-                step3_rows = _st_supa.list_latest_inventory_rows_by_warehouse(
+                step3_rows = _ds_t4.get_latest_inventory_rows_by_warehouse(
                     selected_warehouse_code, limit=5000
                 )
                 if not step3_rows:
@@ -1700,15 +1688,21 @@ with tab5:
         "**字段说明**：编码=品项编码（自动生成）；名称=品项名称；类别=调味酱/包材/乳制品等；"
         "单价=加价后有效采购价。")
 
-    client = st.session_state.supabase
+    _ds_t5 = st.session_state.data_service
+    _rm_cache = _ds_t5.get_raw_materials()
+    _categories = ["全部"] + sorted({m["category"] for m in _rm_cache if m.get("category")})
+    _status_options = ["全部", "上线", "已生效", "下线"]
 
-    # ── Stats row ──
-    stats = get_material_stats(client)
+    # ── Stats row (from cached data) ──
+    _total = len(_rm_cache)
+    _active_count = sum(1 for m in _rm_cache if m.get("status") in ("上线", "已生效"))
+    _inactive_count = _total - _active_count
+    _category_count = len({m["category"] for m in _rm_cache if m.get("category")})
     col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-    col_s1.metric("原料总数", stats["total"])
-    col_s2.metric("已上线", stats["active"])
-    col_s3.metric("已下线", stats["inactive"])
-    col_s4.metric("类别数", len(stats["by_category"]))
+    col_s1.metric("原料总数", _total)
+    col_s2.metric("已上线", _active_count)
+    col_s3.metric("已下线", _inactive_count)
+    col_s4.metric("类别数", _category_count)
 
     # ── 独立上传接口 ──
     with st.expander("📤 上传原料表（Excel）", expanded=False):
@@ -1724,26 +1718,22 @@ with tab5:
                 markup_path = tmp_markup.name
             items_wb = load_workbook(Path(items_path))
             markup_wb = load_workbook(Path(markup_path))
-            diffs = _preview_sync_raw_materials_compat(items_wb.sheets, markup_wb.sheets, client)
+            diffs = _preview_sync_raw_materials_compat(items_wb.sheets, markup_wb.sheets, _ds_t5.client)
             df_diff = pd.DataFrame(diffs)
             st.dataframe(df_diff, use_container_width=True, hide_index=True)
             if st.button("确认执行同步", key="sync_upload"):
-                result = _execute_sync_raw_materials_compat(items_wb.sheets, markup_wb.sheets, client)
+                result = _execute_sync_raw_materials_compat(items_wb.sheets, markup_wb.sheets, _ds_t5.client)
                 skip_count = sum(1 for d in diffs if d.get("action") == "skip")
                 st.success(
                     f"同步完成: 新增 {result.inserts}, 更新 {result.updates}, 跳过 {skip_count}"
                 )
-                st.cache_data.clear()
+                _ds_t5.invalidate_all()
                 st.rerun()
         elif uploaded_items is not None or uploaded_markup is not None:
-            st.info("请同时上传“品项导出”和“加价规则导出”两个文件后再预览同步。")
+            st.info('请同时上传「品项导出」和「加价规则导出」两个文件后再预览同步。')
 
-    # ── Filters (from cache) ──
-    _rm_cache = st.session_state.cached_raw_materials
-    _categories = ["全部"] + sorted({m["category"] for m in _rm_cache if m.get("category")})
-    _status_options = ["全部", "上线", "下线"]
-    if "tab5_filter_cat_applied" not in st.session_state:
-        st.session_state["tab5_filter_cat_applied"] = "全部"
+    # ── Filters (from DataService) ──
+    st.session_state["tab5_filter_cat_applied"] = "全部"
     if "tab5_filter_status_applied" not in st.session_state:
         st.session_state["tab5_filter_status_applied"] = "全部"
     if "tab5_filter_search_applied" not in st.session_state:
@@ -1787,7 +1777,10 @@ with tab5:
     if search_term:
         all_materials = [m for m in all_materials if search_term.lower() in (m.get("name") or "").lower()]
     if filter_status != "全部":
-        all_materials = [m for m in all_materials if m.get("status") == filter_status]
+        if filter_status == "上线":
+            all_materials = [m for m in all_materials if m.get("status") in ("上线", "已生效")]
+        else:
+            all_materials = [m for m in all_materials if m.get("status") == filter_status]
 
     df_materials = pd.DataFrame(all_materials)
     if not df_materials.empty:
@@ -1804,7 +1797,7 @@ with tab5:
     # ── Helper: next code ──
     def _next_material_code() -> str:
         max_num = 0
-        for m in st.session_state.cached_raw_materials:
+        for m in _ds_t5.get_raw_materials():
             c = (m.get("code") or "").strip()
             if c.startswith("RM") and c[2:].isdigit():
                 max_num = max(max_num, int(c[2:]))
@@ -1844,7 +1837,7 @@ with tab5:
                 if errors:
                     st.error(f"请填写以下必填字段: {', '.join(errors)}")
                 else:
-                    client.create_raw_material({
+                    _ds_t5.create_raw_material({
                         "code": auto_code,
                         "name": new_name,
                         "category": new_category if new_category != "新增类别..." else "",
@@ -1857,12 +1850,11 @@ with tab5:
                         "notes": new_notes,
                     })
                     st.success(f"已新增: {new_name} ({auto_code})")
-                    st.cache_data.clear()
                     st.rerun()
 
     else:
         # ── Edit existing material ──
-        all_names = {m["name"]: m for m in st.session_state.cached_raw_materials}
+        all_names = {m["name"]: m for m in _ds_t5.get_raw_materials()}
         if not all_names:
             st.info("暂无原料可修改。")
         else:
@@ -1904,7 +1896,7 @@ with tab5:
                     if errors:
                         st.error(f"请填写以下必填字段: {', '.join(errors)}")
                     else:
-                        client.update_raw_material(edit_material["id"], {
+                        _ds_t5.update_raw_material(edit_material["id"], {
                             "name": edit_name,
                             "category": edit_category if edit_category != "新增类别..." else "",
                             "unit": edit_unit,
@@ -1916,7 +1908,6 @@ with tab5:
                             "notes": edit_notes,
                         })
                         st.success(f"已更新: {edit_name}")
-                        st.cache_data.clear()
                         st.rerun()
 
             st.markdown("---")
@@ -1929,10 +1920,9 @@ with tab5:
                 if st.session_state.get("confirm_delete_material") == edit_material["id"]:
                     st.warning(f"确认删除「{edit_material['name']}」？此操作不可撤销。")
                     if st.button("确认删除", type="primary"):
-                        client.delete_raw_material(edit_material["id"])
+                        _ds_t5.delete_raw_material(edit_material["id"])
                         st.session_state.pop("confirm_delete_material", None)
                         st.success(f"已删除: {edit_material['name']}")
-                        st.cache_data.clear()
                         st.rerun()
                     if st.button("取消"):
                         st.session_state.pop("confirm_delete_material", None)
@@ -1952,14 +1942,14 @@ with tab6:
             return m.group(1).strip(), m.group(2)
         return name.strip(), ""
 
-    client = st.session_state.supabase
+    _ds_t6 = st.session_state.data_service
 
     # ── Left column: product list ──
     col_left, col_right = st.columns([1, 2])
 
     with col_left:
         st.subheader("产品列表")
-        _prods_cache_t6 = st.session_state.cached_products
+        _prods_cache_t6 = _ds_t6.get_products()
         if not _prods_cache_t6:
             st.info("暂无产品。")
             st.stop()
@@ -1979,7 +1969,7 @@ with tab6:
                 if st.form_submit_button("保存"):
                     if new_p_name:
                         _name, _version = _split_version(new_p_name)
-                        client.create_product({
+                        _ds_t6.create_product({
                             "name": _name,
                             "version": _version,
                             "category": new_p_category,
@@ -1987,8 +1977,6 @@ with tab6:
                             "is_final_product": new_p_final,
                         })
                         st.success(f"已创建: {new_p_name}")
-                        st.cache_data.clear()
-                        _hydrate_cache(_st_supa)
                         st.rerun()
                     else:
                         st.error("品名不能为空")
@@ -2027,7 +2015,7 @@ with tab6:
                 edit_is_final = st.checkbox("最终成品", value=prod_data.get("is_final_product", False))
 
             if st.form_submit_button("保存产品信息"):
-                client.update_product(selected_id, {
+                _ds_t6.update_product(selected_id, {
                     "name": edit_name,
                     "version": edit_version,
                     "category": edit_category,
@@ -2036,18 +2024,16 @@ with tab6:
                     "is_final_product": edit_is_final,
                 })
                 st.success("产品信息已更新")
-                st.cache_data.clear()
-                _hydrate_cache(_st_supa)
                 st.rerun()
 
         # ── Recipe BOM editor ──
         st.subheader("配方明细 (BOM)")
 
-        # Load ingredient pool (from cache)
-        pool = {"raw_materials": st.session_state.cached_raw_materials, "products": st.session_state.cached_products}
+        # Load ingredient pool (from DataService)
+        pool = {"raw_materials": _ds_t6.get_raw_materials(), "products": _ds_t6.get_products()}
 
         # Show existing recipes
-        _all_recipes_t6 = st.session_state.cached_all_recipes
+        _all_recipes_t6 = _ds_t6.get_all_recipes()
         recipes = [r for r in _all_recipes_t6 if r.get("product_id") == selected_id]
         if recipes:
             recipe_rows = []
@@ -2081,9 +2067,7 @@ with tab6:
                 st.download_button("📥 导出 CSV", data=csv_data, file_name=f"配方_{prod_data['name']}.csv", mime="text/csv")
             with col_exp2:
                 if st.button("🗑️ 清空全部配方", key="clear_recipes"):
-                    client.set_recipes(selected_id, [])
-                    st.cache_data.clear()
-                    _hydrate_cache(_st_supa)
+                    _ds_t6.set_recipes(selected_id, [])
                     st.rerun()
 
             st.dataframe(df_recipes, use_container_width=True, hide_index=True)
@@ -2102,15 +2086,13 @@ with tab6:
                             "ingredient_source": r["ingredient_source"],
                             "raw_material_id": _extract_id(r.get("raw_material_id")),
                             "ref_product_id": _extract_id(r.get("ref_product_id")),
-                            "quantity": r["quantity"],
-                            "unit_cost": None,
-                            "store_unit_cost": None,
+                            "quantity": r.get("quantity") or 0,
+                            "unit_cost": r.get("unit_cost"),
+                            "store_unit_cost": r.get("store_unit_cost"),
                             "sort_order": i,
                         })
-                    client.set_recipes(selected_id, normalized)
+                    _ds_t6.set_recipes(selected_id, normalized)
                     st.success("配料已删除")
-                    st.cache_data.clear()
-                    _hydrate_cache(_st_supa)
                     st.rerun()
         else:
             st.info("暂无配方明细数据。")
@@ -2150,17 +2132,15 @@ with tab6:
                         "ingredient_source": r["ingredient_source"],
                         "raw_material_id": _extract_id(r.get("raw_material_id")),
                         "ref_product_id": _extract_id(r.get("ref_product_id")),
-                        "quantity": r["quantity"],
+                        "quantity": r.get("quantity") or 0,
                         "unit_cost": r.get("unit_cost"),
                         "store_unit_cost": r.get("store_unit_cost"),
                         "sort_order": r.get("sort_order", 0),
                     } for r in recipes]
 
                     existing_recipes.append(new_recipe)
-                    client.set_recipes(selected_id, existing_recipes)
+                    _ds_t6.set_recipes(selected_id, existing_recipes)
                     st.success("配料已添加")
-                    st.cache_data.clear()
-                    _hydrate_cache(_st_supa)
                     st.rerun()
 
 # ── Tab7: 出品规格管理 ──────────────────────────────────────
@@ -2171,13 +2151,13 @@ with tab7:
         "每个规格可配置主原料用量和附加配料。\n"
         "**使用方式**：选择产品 → 编辑出品规格 → 保存。")
 
-    client = st.session_state.supabase
+    _ds_t7 = st.session_state.data_service
     # ── Left column: product list ──
     col_left7, col_right7 = st.columns([1, 2])
 
     with col_left7:
         st.subheader("产品列表")
-        _t7_prods = [p for p in st.session_state.cached_products if p.get("is_final_product")]
+        _t7_prods = [p for p in _ds_t7.get_products() if p.get("is_final_product")]
         if not _t7_prods:
             st.info("暂无最终成品。请先在「配方管理」中创建产品并勾选「最终成品」。")
             st.stop()
@@ -2189,14 +2169,14 @@ with tab7:
 
     with col_right7:
         # ── Product info ──
-        prod_data = _t7_prod_by_id.get(sel_prod_id, st.session_state.cached_products[0] if st.session_state.cached_products else {})
+        _t7_all_prods = _ds_t7.get_products()
+        prod_data = _t7_prod_by_id.get(sel_prod_id, _t7_all_prods[0] if _t7_all_prods else {})
         st.subheader(f"📋 {prod_data.get('name','')} — 出品规格")
 
-        # Load pools (from cache)
-        _t7_rm = st.session_state.cached_raw_materials
+        # Load pools (from DataService)
+        _t7_rm = _ds_t7.get_raw_materials()
         all_mat_options = {f"{m['name']} ({m.get('category','')})": m["id"] for m in _t7_rm}
         pkg_options = {rm["name"]: rm["id"] for rm in _t7_rm if rm.get("category") in (CATEGORY_PACKAGING, None)}
-        _t7_all_prods = st.session_state.cached_products
         main_prod_options = {f"{p['name']} v{p.get('version','')}".rstrip("v "): p["id"] for p in _t7_all_prods}
 
         # Shared options for both edit and add forms
@@ -2207,15 +2187,12 @@ with tab7:
         }
         _mat_unit = {m["name"]: m.get("unit", "") for m in _t7_rm}
 
-        # ── Existing specs (from cache) ──
-        specs = [s for s in st.session_state.cached_all_specs if s.get("product_id") == sel_prod_id]
+        # ── Existing specs (from DataService) ──
+        specs = [s for s in _ds_t7.get_all_serving_specs() if s.get("product_id") == sel_prod_id]
 
         def _refresh_specs_cache():
-            """Re-fetch all serving specs from Supabase into session state."""
-            try:
-                st.session_state.cached_all_specs = st.session_state.supabase.list_all_serving_specs()
-            except Exception:
-                pass
+            """Invalidate DataService cache so specs refresh on next read."""
+            _ds_t7.invalidate_all()
 
         if specs:
             for i, s in enumerate(specs):
@@ -2278,9 +2255,8 @@ with tab7:
                         if st.button("🗑️", key=f"del_{s['id']}", help="删除规格"):
                             remaining = [sp for sp in specs if sp["id"] != s["id"]]
                             normalized = [_normalize_spec_payload(sp) for sp in remaining]
-                            client.set_serving_specs(sel_prod_id, normalized)
+                            _ds_t7.set_serving_specs(sel_prod_id, normalized)
                             _refresh_specs_cache()
-                            st.cache_data.clear()
                             st.rerun()
 
                     # ── Edit form (inline, below spec details) ──
@@ -2389,10 +2365,9 @@ with tab7:
                                     else:
                                         _edit_payload.append(_normalize_spec_payload(_sp))
 
-                                client.set_serving_specs(sel_prod_id, _edit_payload)
+                                _ds_t7.set_serving_specs(sel_prod_id, _edit_payload)
                                 st.session_state.pop("_editing_spec", None)
                                 _refresh_specs_cache()
-                                st.cache_data.clear()
                                 st.rerun()
         else:
             st.info("暂无出品规格。使用下方表单添加。")
@@ -2489,15 +2464,14 @@ with tab7:
                         new_spec["_toppings"] = all_toppings
                     existing_payload.append(new_spec)
 
-                    client.set_serving_specs(sel_prod_id, existing_payload)
+                    _ds_t7.set_serving_specs(sel_prod_id, existing_payload)
                     _refresh_specs_cache()
                     st.success(f"已新增规格: {new_spec_name}")
-                    st.cache_data.clear()
                     st.rerun()
 
 # ── Tab8: 门店库存 ──────────────────────────────────────────
 with tab8:
-    _render_inventory_fragment(_st_supa)
+    _render_inventory_fragment(st.session_state.data_service.client)
 
 # ── Tab9: 覆盖天数分析 ──
 with tab9:
