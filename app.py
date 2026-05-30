@@ -1044,7 +1044,7 @@ with tab3:
             st.write("")
             if st.button("保存方案", use_container_width=True):
                 adjustments = []
-                for _, r in recipe_rows[recipe_rows["level"] != 2].iterrows():
+                for _, r in recipe_rows.iterrows():
                     item = str(r.get("item", "")).strip()
                     lvl = int(r.get("level", 0))
                     orig_sp = float(r.get("store_price", 0) or 0)
