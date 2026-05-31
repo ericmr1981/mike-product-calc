@@ -6,6 +6,12 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from mike_product_calc.calc.inventory_consumption import (
+    build_consumption_kpis,
+    build_consumption_table,
+    classify_depletion_urgency,
+    format_consumption_amount,
+)
 from mike_product_calc.data.inventory_view import (
     build_inventory_kpis,
     classify_inventory_row,
@@ -16,6 +22,7 @@ from mike_product_calc.data.inventory_view import (
 STATUS_PRIORITY = {"异常": 0, "缺货": 1, "低库存": 2, "正常": 3}
 SAFETY_STATUS_OPTIONS = ["全部", "正常", "低于安全库存", "零库存"]
 STATUS_COLORS = {"零库存": "#FF4444", "低于安全库存": "#FFB347", "正常": None}
+DEPLETION_COLORS = {"urgent": "#FFDDDD", "warning": "#FFF3CD", "normal": None}
 HIDDEN_DEFAULT_COLUMNS = {
     "snapshot_at",
     "id",
@@ -170,6 +177,161 @@ def _styler_for_safety(row: pd.Series) -> list[str]:
     return ["" for _ in row.index]
 
 
+def render_consumption_kpi_row(kpis: dict) -> None:
+    """Render consumption KPI cards (Row3)."""
+    amt_col1, amt_col2, amt_col3, amt_col4 = st.columns(4)
+
+    amt_col1.metric(
+        "消耗总额",
+        format_consumption_amount(kpis["total_consumption_amount"]),
+    )
+    amt_col2.metric(
+        "日均消耗额",
+        format_consumption_amount(kpis["daily_avg_amount"]),
+    )
+    amt_col3.metric(
+        "消耗品项数",
+        f"{kpis['consumption_item_count']} / {kpis['total_matched_items']}",
+    )
+    fastest = kpis.get("fastest_item_name")
+    if fastest:
+        amt_col4.metric(
+            "消耗最快",
+            fastest,
+            delta=f"{kpis['fastest_item_daily']:.2f}/天" if kpis['fastest_item_daily'] else "",
+            delta_color="off",
+        )
+    else:
+        amt_col4.metric("消耗最快", "—")
+
+
+def _styler_for_depletion(depletion_urgency_col: pd.Series) -> pd.DataFrame:
+    """Return per-row background colours based on depletion urgency."""
+    styles = pd.DataFrame("", index=depletion_urgency_col.index, columns=depletion_urgency_col.index)
+    # Return empty styles (Streamlit's dataframe styling handles this differently)
+    # We'll use a simple approach
+    return ["background-color: #FFDDDD" if u == "urgent"
+            else "background-color: #FFF3CD" if u == "warning"
+            else "" for u in depletion_urgency_col]
+
+
+def render_consumption_expander(client) -> None:
+    """Render the consumption analysis expander in the inventory tab."""
+    with st.expander("\U0001f4ca 消耗分析", expanded=False):
+        # Date range filter
+        today = datetime.now(timezone.utc)
+        default_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        default_end = today
+
+        col_date1, col_date2, col_date3 = st.columns([1, 1, 2])
+        start_date = col_date1.date_input("起始日期", value=default_start.date())
+        end_date = col_date2.date_input("截止日期", value=default_end.date())
+        query_clicked = col_date3.button("查询", type="primary")
+
+        query_fn = getattr(client, "query_consumption", None)
+        if not callable(query_fn):
+            st.info("消耗分析功能未就绪（Supabase 客户端缺少 query_consumption 方法）")
+            return
+
+        try:
+            start_iso = datetime.combine(start_date, datetime.min.time()).isoformat()
+            end_iso = datetime.combine(end_date, datetime.max.time()).isoformat()
+            consumption_rows = query_fn(start_iso, end_iso)
+        except Exception as exc:
+            st.error(f"消耗数据加载失败：{exc}")
+            return
+
+        if not consumption_rows:
+            st.info(f"在 {start_date} ~ {end_date} 范围内未找到足够的盘点数据。请确认已上传至少 2 份盘点记录。")
+            return
+
+        days = (end_date - start_date).days
+        if days < 1:
+            days = 1
+
+        # Match info bar
+        matched = sum(1 for r in consumption_rows if r.get("item_type") == "matched")
+        new_items_count = sum(1 for r in consumption_rows if r.get("item_type") == "new")
+        st.caption(f"统计区间：{days} 天 | 匹配品项：{matched} 项 | 新品项（仅期末有数据）：{new_items_count} 项")
+
+        # Build table and controls
+        df = build_consumption_table(consumption_rows, days=days)
+
+        categories = ["全部"]
+        if "category" in df.columns:
+            cats = [c for c in df["category"].dropna().unique() if c]
+            if cats:
+                categories = ["全部"] + sorted(cats)
+
+        filter_col1, filter_col2 = st.columns([1, 1])
+        sort_by = filter_col1.selectbox("排序", options=["消耗量", "消耗金额", "日均消耗", "品项名称"], index=0)
+        cat_filter = filter_col2.selectbox("品类筛选", options=categories, index=0)
+
+        # Apply filters
+        if cat_filter != "全部" and "category" in df.columns:
+            df = df[df["category"] == cat_filter]
+
+        # Apply sort
+        sort_map = {
+            "消耗量": ("consumption_qty", False),
+            "消耗金额": ("consumption_amount", False),
+            "日均消耗": ("日均消耗", False),
+            "品项名称": ("item_name", True),
+        }
+        sort_col, sort_asc = sort_map.get(sort_by, ("consumption_qty", False))
+        df = df.sort_values(sort_col, ascending=sort_asc, na_position="last")
+
+        # Build display columns
+        display_cols = {
+            "item_code": "品项编码",
+            "item_name": "品项名称",
+            "unit": "单位",
+            "start_qty": "期初库存",
+            "delivery_qty": "到货量",
+            "end_qty": "期末库存",
+            "consumption_qty": "消耗量",
+            "consumption_amount": "消耗金额",
+            "日均消耗": "日均消耗",
+            "预计耗尽天数": "预计耗尽",
+        }
+        available_cols = {k: v for k, v in display_cols.items() if k in df.columns}
+        display_df = df[list(available_cols.keys())].rename(columns=available_cols)
+
+        # Format numeric columns
+        for col in ["消耗量", "期初库存", "期末库存", "到货量", "日均消耗"]:
+            if col in display_df.columns:
+                display_df[col] = display_df[col].apply(
+                    lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else str(x)
+                )
+
+        # Format consumption amount
+        if "消耗金额" in display_df.columns:
+            display_df["消耗金额"] = display_df["消耗金额"].apply(
+                lambda x: format_consumption_amount(x) if isinstance(x, (int, float)) else str(x)
+            )
+
+        # New items show "-" for consumption fields
+        if "item_type" in df.columns:
+            new_mask = df["item_type"] == "new"
+            if new_mask.any():
+                for col in ["消耗量", "消耗金额", "日均消耗", "预计耗尽"]:
+                    if col in display_df.columns:
+                        display_df.loc[new_mask.values, col] = "-"
+
+        # Apply depletion styling
+        if "_depletion_urgency" in df.columns:
+            urgency_styles = df["_depletion_urgency"].apply(
+                lambda u: "background-color: #FFDDDD" if u == "urgent"
+                else "background-color: #FFF3CD" if u == "warning"
+                else ""
+            )
+            styled = display_df.style.apply(lambda _: urgency_styles, axis=0)
+        else:
+            styled = display_df
+
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+
 def render_inventory_tab(client) -> None:
     """Render storefront-first inventory dashboard tab."""
     st.title("库存状态")
@@ -315,6 +477,30 @@ def render_inventory_tab(client) -> None:
     amt_col2.metric("原料/包材", _fmt_amt(other_amt))
     amt_col3.metric("工具", _fmt_amt(tool_amt))
 
+    # ── Consumption KPIs ──────────────────────────────────────────
+    consumption_fn = getattr(client, "query_consumption", None)
+    if callable(consumption_fn):
+        try:
+            today_utc = datetime.now(timezone.utc)
+            month_start = today_utc.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            consumption_rows = consumption_fn(month_start.isoformat(), today_utc.isoformat())
+            if consumption_rows:
+                consumption_kpis = build_consumption_kpis(
+                    consumption_rows,
+                    days=max(1, (today_utc - month_start).days),
+                )
+            else:
+                consumption_kpis = {
+                    "total_consumption_amount": 0, "daily_avg_amount": 0,
+                    "consumption_item_count": 0, "total_matched_items": 0,
+                    "total_new_items": 0, "fastest_item_name": "",
+                    "fastest_item_daily": 0, "top_category_name": "",
+                    "top_category_amount": 0,
+                }
+            render_consumption_kpi_row(consumption_kpis)
+        except Exception:
+            pass
+
     if not rows:
         st.info("暂无库存快照数据")
 
@@ -325,3 +511,5 @@ def render_inventory_tab(client) -> None:
     format_spec = {col: "{:.2f}" for col in NUMERIC_COLS if col in visible_df.columns}
     styled = visible_df.style.apply(_styler_for_safety, axis=1).format(format_spec, na_rep="0.00")
     st.dataframe(styled, use_container_width=True, hide_index=True)
+
+    render_consumption_expander(client)
