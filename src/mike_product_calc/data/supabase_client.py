@@ -509,6 +509,106 @@ class MpcSupabaseClient:
         return rows[0].get("snapshot_at") if rows else None
 
     # ------------------------------------------------------------------
+    # Inventory Check Batches
+    # ------------------------------------------------------------------
+
+    def create_check_batch(self, data: dict) -> dict:
+        resp = requests.post(
+            f"{self._base}/inventory_check_batches", headers=self._headers(), json=[data]
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        return rows[0]
+
+    def find_check_batch(
+        self, *, source_filename: str, source_file_sha256: str | None = None
+    ) -> dict | None:
+        params = {"source_filename": f"eq.{source_filename}", "limit": "1"}
+        resp = requests.get(
+            f"{self._base}/inventory_check_batches", headers=self._headers(), params=params
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        if rows:
+            return rows[0]
+        return None
+
+    def update_check_batch(self, batch_id: str, data: dict) -> dict:
+        resp = requests.patch(
+            f"{self._base}/inventory_check_batches?id=eq.{batch_id}",
+            headers=self._headers(),
+            json=data,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        return rows[0] if rows else {}
+
+    def insert_check_items(self, rows: list[dict]) -> list[dict]:
+        resp = requests.post(
+            f"{self._base}/inventory_check_items", headers=self._headers(), json=rows
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def list_check_batches(self) -> list[dict]:
+        params = {"order": "check_at.desc", "limit": "100"}
+        resp = requests.get(
+            f"{self._base}/inventory_check_batches", headers=self._headers(), params=params
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    # ------------------------------------------------------------------
+    # Inventory Delivery Batches
+    # ------------------------------------------------------------------
+
+    def create_delivery_batch(self, data: dict) -> dict:
+        resp = requests.post(
+            f"{self._base}/inventory_delivery_batches", headers=self._headers(), json=[data]
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        return rows[0]
+
+    def find_delivery_batch(
+        self, *, source_filename: str, source_file_sha256: str | None = None
+    ) -> dict | None:
+        params = {"source_filename": f"eq.{source_filename}", "limit": "1"}
+        resp = requests.get(
+            f"{self._base}/inventory_delivery_batches", headers=self._headers(), params=params
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        if rows:
+            return rows[0]
+        return None
+
+    def update_delivery_batch(self, batch_id: str, data: dict) -> dict:
+        resp = requests.patch(
+            f"{self._base}/inventory_delivery_batches?id=eq.{batch_id}",
+            headers=self._headers(),
+            json=data,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        return rows[0] if rows else {}
+
+    def insert_delivery_items(self, rows: list[dict]) -> list[dict]:
+        resp = requests.post(
+            f"{self._base}/inventory_delivery_items", headers=self._headers(), json=rows
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def list_delivery_batches(self) -> list[dict]:
+        params = {"order": "delivery_at.desc", "limit": "100"}
+        resp = requests.get(
+            f"{self._base}/inventory_delivery_batches", headers=self._headers(), params=params
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    # ------------------------------------------------------------------
     # Cost computation
     # ------------------------------------------------------------------
 
