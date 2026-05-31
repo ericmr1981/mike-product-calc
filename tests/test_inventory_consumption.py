@@ -118,3 +118,107 @@ def test_build_consumption_table_zero_daily_avg() -> None:
     ]
     df = build_consumption_table(rows, days=6)
     assert df.iloc[0]["预计耗尽天数"] == "充足"
+
+
+# ------------------------------------------------------------------
+# SupabaseClient consumption query tests
+# ------------------------------------------------------------------
+
+
+def test_compute_consumption_basic(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_compute_consumption should correctly compute consumption_qty for matched items."""
+    from mike_product_calc.data.supabase_client import MpcSupabaseClient
+
+    import requests
+
+    def mock_get(url, *args, **kwargs):
+        class MockResponse:
+            ok = True
+            status_code = 200
+
+            def json(self):
+                return []
+
+            def raise_for_status(self):
+                pass
+
+        return MockResponse()
+
+    monkeypatch.setattr(requests, "get", mock_get)
+
+    client = MpcSupabaseClient(url="http://localhost", key="test")
+    start_items = {
+        "WP0013": {
+            "item_code": "WP0013", "item_name": "冰碗5oz",
+            "unit": "箱", "category": "包材", "system_qty": 1.818, "avg_price": 328,
+        },
+        "WP0014": {
+            "item_code": "WP0014", "item_name": "冰碗8oz",
+            "unit": "箱", "category": "包材", "system_qty": 0.850, "avg_price": 448,
+        },
+    }
+    end_items = {
+        "WP0013": {
+            "item_code": "WP0013", "item_name": "冰碗5oz",
+            "unit": "箱", "category": "包材", "system_qty": 1.796,
+        },
+        "WP0014": {
+            "item_code": "WP0014", "item_name": "冰碗8oz",
+            "unit": "箱", "category": "包材", "system_qty": 0.750,
+        },
+    }
+    result = client._compute_consumption(
+        start_items, end_items, "2026-05-25", "2026-05-31"
+    )
+    assert len(result) == 2
+    items_map = {r["item_code"]: r for r in result}
+    assert items_map["WP0013"]["consumption_qty"] == pytest.approx(0.022, rel=0.1)
+    assert items_map["WP0014"]["consumption_qty"] == pytest.approx(0.100, rel=0.1)
+
+
+def test_compute_consumption_new_items(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Items only in end_items should be marked as item_type='new'."""
+    from mike_product_calc.data.supabase_client import MpcSupabaseClient
+
+    import requests
+
+    def mock_get(url, *args, **kwargs):
+        class MockResponse:
+            ok = True
+            status_code = 200
+
+            def json(self):
+                return []
+
+            def raise_for_status(self):
+                pass
+
+        return MockResponse()
+
+    monkeypatch.setattr(requests, "get", mock_get)
+
+    client = MpcSupabaseClient(url="http://localhost", key="test")
+    start_items = {
+        "A": {"item_code": "A", "system_qty": 10, "avg_price": 50},
+    }
+    end_items = {
+        "A": {"item_code": "A", "system_qty": 5},
+        "B": {"item_code": "B", "system_qty": 15},
+    }
+    result = client._compute_consumption(
+        start_items, end_items, "2026-05-01", "2026-05-31"
+    )
+    items_map = {r["item_code"]: r for r in result}
+    assert items_map["A"]["item_type"] == "matched"
+    assert items_map["B"]["item_type"] == "new"
+    assert items_map["B"]["consumption_qty"] is None
+    assert items_map["B"]["start_qty"] is None
+
+
+def test_date_diff_days() -> None:
+    """_date_diff_days should return positive diff with minimum of 1."""
+    from mike_product_calc.data.supabase_client import MpcSupabaseClient
+
+    assert MpcSupabaseClient._date_diff_days("2026-05-25", "2026-05-31") == 6
+    assert MpcSupabaseClient._date_diff_days("2026-05-31", "2026-05-31") == 1
+    assert MpcSupabaseClient._date_diff_days("invalid", "2026-05-31") == 1

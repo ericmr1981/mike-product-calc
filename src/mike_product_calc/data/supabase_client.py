@@ -609,6 +609,173 @@ class MpcSupabaseClient:
         return resp.json()
 
     # ------------------------------------------------------------------
+    # Consumption Query
+    # ------------------------------------------------------------------
+
+    def query_consumption(self, start_date: str, end_date: str) -> list[dict]:
+        """Query consumption analysis data between two dates.
+
+        Finds the earliest and latest inventory check batch in the date
+        range, retrieves their items, and computes consumption over the
+        period (including any deliveries).
+        """
+        # 1. Find check batches in date range
+        check_params = {
+            "select": "id,check_at,source_filename",
+            "check_at": f"gte.{start_date}",
+            "order": "check_at.asc",
+            "limit": "100",
+        }
+        resp = requests.get(
+            f"{self._base}/inventory_check_batches",
+            headers=self._headers(),
+            params=check_params,
+        )
+        resp.raise_for_status()
+        batches = resp.json()
+
+        if len(batches) < 2:
+            return []
+
+        start_batch = batches[0]
+        end_batch = batches[-1]
+
+        # 2. Fetch items for start and end batches
+        def _fetch_items(batch_id: str) -> list[dict]:
+            p = {"batch_id": f"eq.{batch_id}", "limit": "5000"}
+            r = requests.get(
+                f"{self._base}/inventory_check_items",
+                headers=self._headers(),
+                params=p,
+            )
+            r.raise_for_status()
+            return r.json()
+
+        start_items = {it["item_code"]: it for it in _fetch_items(start_batch["id"])}
+        end_items = {it["item_code"]: it for it in _fetch_items(end_batch["id"])}
+
+        return self._compute_consumption(start_items, end_items, start_date, end_date)
+
+    def _compute_consumption(
+        self,
+        start_items: dict[str, dict],
+        end_items: dict[str, dict],
+        start_date: str,
+        end_date: str,
+    ) -> list[dict]:
+        """Core consumption computation.
+
+        Fetches delivery batches in the date range, aggregates delivery
+        quantities by item code, then computes consumption for each item
+        that appears in either the start or end check.
+        """
+        # Fetch delivery batches in range
+        db_params = {
+            "select": "id,delivery_at",
+            "delivery_at": f"gte.{start_date}",
+            "order": "delivery_at.asc",
+            "limit": "100",
+        }
+        resp = requests.get(
+            f"{self._base}/inventory_delivery_batches",
+            headers=self._headers(),
+            params=db_params,
+        )
+        resp.raise_for_status()
+        delivery_batches = resp.json()
+
+        # Aggregate delivery qty by item_code
+        delivery_by_item: dict[str, float] = {}
+        for db in delivery_batches:
+            p = {
+                "batch_id": f"eq.{db['id']}",
+                "select": "item_code,delivery_qty",
+                "limit": "5000",
+            }
+            r = requests.get(
+                f"{self._base}/inventory_delivery_items",
+                headers=self._headers(),
+                params=p,
+            )
+            if r.ok:
+                for item in r.json():
+                    code = item["item_code"]
+                    delivery_by_item[code] = delivery_by_item.get(code, 0) + float(
+                        item.get("delivery_qty") or 0
+                    )
+
+        days = max(1, self._date_diff_days(start_date, end_date))
+        results: list[dict] = []
+
+        all_codes = set(start_items.keys()) | set(end_items.keys())
+        for code in sorted(all_codes):
+            s = start_items.get(code, {})
+            e = end_items.get(code, {})
+
+            start_qty = (
+                float(s.get("system_qty"))
+                if s and s.get("system_qty") is not None
+                else None
+            )
+            end_qty = (
+                float(e.get("system_qty"))
+                if e and e.get("system_qty") is not None
+                else None
+            )
+            avg_price = (
+                float(s.get("avg_price"))
+                if s and s.get("avg_price") is not None
+                else None
+            )
+            delivery_qty = delivery_by_item.get(code, 0)
+
+            if start_qty is not None and end_qty is not None:
+                consumption_qty = max(0, start_qty + delivery_qty - end_qty)
+                consumption_amount = (
+                    round(consumption_qty * (avg_price or 0), 2) if avg_price else 0
+                )
+                item_type = "matched"
+            elif end_qty is not None:
+                consumption_qty = None
+                consumption_amount = None
+                item_type = "new"
+            else:
+                continue
+
+            results.append({
+                "item_code": code,
+                "item_name": s.get("item_name") or e.get("item_name", ""),
+                "unit": s.get("unit") or e.get("unit", ""),
+                "category": s.get("category") or e.get("category", ""),
+                "spec": s.get("spec") or e.get("spec", ""),
+                "start_qty": start_qty,
+                "end_qty": end_qty,
+                "delivery_qty": delivery_qty,
+                "consumption_qty": (
+                    round(consumption_qty, 6)
+                    if consumption_qty is not None
+                    else None
+                ),
+                "consumption_amount": consumption_amount,
+                "avg_price": avg_price,
+                "item_type": item_type,
+            })
+
+        return results
+
+    @staticmethod
+    def _date_diff_days(start_date: str, end_date: str) -> int:
+        """Compute calendar days between two ISO date strings (minimum 1)."""
+        from datetime import datetime
+
+        try:
+            s = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+            e = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+            return max(1, (e - s).days)
+        except (ValueError, TypeError):
+            return 1
+
+    # ------------------------------------------------------------------
     # Cost computation
     # ------------------------------------------------------------------
 
