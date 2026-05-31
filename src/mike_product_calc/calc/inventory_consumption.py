@@ -25,7 +25,7 @@ def format_consumption_amount(amount: float | None) -> str:
     """
     if amount is None:
         return "-"
-    if amount >= 100000:
+    if amount >= 10000:
         wan = amount / 10000
         return f"¥{wan:,.2f}万"
     return f"¥{amount:,.2f}"

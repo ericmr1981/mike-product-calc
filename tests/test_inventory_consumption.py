@@ -78,7 +78,7 @@ def test_build_consumption_table_depletion_highlight() -> None:
 
 
 def test_format_consumption_amount() -> None:
-    assert format_consumption_amount(12345) == "¥12,345.00"
+    assert format_consumption_amount(12345) == "¥1.23万"
     assert format_consumption_amount(12345678) == "¥1,234.57万"
     assert format_consumption_amount(0) == "¥0.00"
     assert format_consumption_amount(None) == "-"
