@@ -521,7 +521,7 @@ class MpcSupabaseClient:
         return rows[0]
 
     def find_check_batch(
-        self, *, source_filename: str, source_file_sha256: str | None = None
+        self, *, source_filename: str
     ) -> dict | None:
         params = {"source_filename": f"eq.{source_filename}", "limit": "1"}
         resp = requests.get(
@@ -571,7 +571,7 @@ class MpcSupabaseClient:
         return rows[0]
 
     def find_delivery_batch(
-        self, *, source_filename: str, source_file_sha256: str | None = None
+        self, *, source_filename: str
     ) -> dict | None:
         params = {"source_filename": f"eq.{source_filename}", "limit": "1"}
         resp = requests.get(
