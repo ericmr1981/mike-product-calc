@@ -4,6 +4,7 @@ import inspect
 import openpyxl
 import pytest
 from openpyxl import Workbook
+from unittest.mock import MagicMock
 
 from mike_product_calc.data.supabase_client import MpcSupabaseClient
 
@@ -231,3 +232,113 @@ def test_prepare_delivery_rows_empty_code(tmp_path):
     result = prepare_delivery_rows(fp)
     assert result.skipped_rows == 1
     assert result.errors.get("missing_required_item_code", 0) == 1
+
+
+def test_sync_check_inventory_file_dry_run(tmp_path):
+    from mike_product_calc.data.inventory_check_upload import sync_check_inventory_file
+
+    rows_data = [
+        {
+            "品项编码": "WP0013",
+            "品项名称": "冰碗5oz",
+            "品项规格": "1000个/箱",
+            "品项类别": "包材",
+            "库存单位": "箱",
+            "初盘数量": 1.8, "复盘数量": 1.8,
+            "系统库存": 1.818, "盘点差异": -0.018,
+            "库存均价": 328, "差异金额": -5.90,
+            "明细状态": "已完成",
+        },
+    ]
+    fp = _make_check_xlsx(tmp_path, rows_data)
+    result = sync_check_inventory_file(client=None, file_path=fp, dry_run=True)
+    assert result["status"] == "dry_run"
+    assert result["inserted_rows"] == 1
+    assert result["skipped_rows"] == 0
+
+
+def test_sync_check_inventory_file_duplicate(tmp_path):
+    from mike_product_calc.data.inventory_check_upload import sync_check_inventory_file
+
+    rows_data = [
+        {
+            "品项编码": "WP0013",
+            "品项名称": "冰碗5oz",
+            "品项规格": "1000个/箱",
+            "品项类别": "包材",
+            "库存单位": "箱",
+            "初盘数量": 1.8, "复盘数量": 1.8,
+            "系统库存": 1.818, "盘点差异": -0.018,
+            "库存均价": 328, "差异金额": -5.90,
+            "明细状态": "已完成",
+        },
+    ]
+    fp = _make_check_xlsx(tmp_path, rows_data)
+
+    mock_client = MagicMock(spec=MpcSupabaseClient)
+    mock_client.find_check_batch.return_value = {"id": "existing-batch-id"}
+
+    result = sync_check_inventory_file(client=mock_client, file_path=fp)
+    assert result["status"] == "skipped_duplicate"
+    assert result["batch_id"] == "existing-batch-id"
+    assert result["inserted_rows"] == 0
+    mock_client.find_check_batch.assert_called_once()
+
+
+def test_sync_check_inventory_file_full_flow(tmp_path):
+    from mike_product_calc.data.inventory_check_upload import sync_check_inventory_file
+
+    rows_data = [
+        {
+            "品项编码": "WP0013",
+            "品项名称": "冰碗5oz",
+            "品项规格": "1000个/箱",
+            "品项类别": "包材",
+            "库存单位": "箱",
+            "初盘数量": 1.8, "复盘数量": 1.8,
+            "系统库存": 1.818, "盘点差异": -0.018,
+            "库存均价": 328, "差异金额": -5.90,
+            "明细状态": "已完成",
+        },
+    ]
+    fp = _make_check_xlsx(tmp_path, rows_data)
+
+    mock_client = MagicMock(spec=MpcSupabaseClient)
+    mock_client.find_check_batch.return_value = None
+    mock_client.create_check_batch.return_value = {"id": "new-batch-id"}
+
+    result = sync_check_inventory_file(client=mock_client, file_path=fp)
+    assert result["status"] == "imported"
+    assert result["batch_id"] == "new-batch-id"
+    assert result["inserted_rows"] == 1
+    mock_client.find_check_batch.assert_called_once()
+    mock_client.create_check_batch.assert_called_once()
+    mock_client.insert_check_items.assert_called_once()
+    mock_client.update_check_batch.assert_called_once()
+
+
+def test_sync_delivery_file_full_flow(tmp_path):
+    from mike_product_calc.data.inventory_check_upload import sync_delivery_file
+
+    rows_data = [
+        {
+            "品项编码": "WP0013",
+            "品项名称": "冰碗5oz",
+            "品项规格": "1000个/箱",
+            "品项类别": "包材",
+            "库存单位": "箱",
+            "数量": 5,
+        },
+    ]
+    fp = _make_delivery_xlsx(tmp_path, rows_data)
+
+    mock_client = MagicMock(spec=MpcSupabaseClient)
+    mock_client.find_delivery_batch.return_value = None
+    mock_client.create_delivery_batch.return_value = {"id": "new-delivery-id"}
+
+    result = sync_delivery_file(client=mock_client, file_path=fp)
+    assert result["status"] == "imported"
+    assert result["batch_id"] == "new-delivery-id"
+    assert result["inserted_rows"] == 1
+    mock_client.find_delivery_batch.assert_called_once()
+    mock_client.create_delivery_batch.assert_called_once()
