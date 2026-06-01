@@ -6,6 +6,7 @@ import pandas as pd
 
 from mike_product_calc.data.inventory_view import (
     build_inventory_kpis,
+    check_items_to_inventory_rows,
     classify_inventory_row,
     classify_safety_status,
     is_snapshot_stale,
@@ -84,3 +85,26 @@ def test_classify_safety_status_normal() -> None:
     assert classify_safety_status(10, 10) == "normal"
     assert classify_safety_status(5, None) == "normal"
     assert classify_safety_status(5, 0) == "normal"
+
+
+def test_check_items_to_inventory_rows() -> None:
+    items = [
+        {"item_code": "WP0013", "item_name": "冰碗5oz", "spec": "1000个/箱",
+         "unit": "箱", "category": "包材", "system_qty": 1.818,
+         "avg_price": 328, "data_warnings": []},
+        {"item_code": "WP0014", "item_name": "冰碗8oz", "spec": "1000个/箱",
+         "unit": "箱", "category": "包材", "system_qty": -0.5,
+         "avg_price": 448, "data_warnings": ["negative_stock"]},
+    ]
+    rows = check_items_to_inventory_rows(items)
+    assert len(rows) == 2
+    assert rows[0]["item_code"] == "WP0013"
+    assert rows[0]["available_qty"] == 1.818
+    assert rows[0]["stock_qty"] == 1.818
+    assert rows[0]["stock_unit_price"] == 328.0
+    assert rows[0]["current_amount"] == 596.30  # 1.818 * 328
+    assert rows[0]["is_negative_stock"] is False
+    assert rows[0]["_source"] == "check"
+
+    assert rows[1]["is_negative_stock"] is True
+    assert rows[1]["category_lv2"] == "包材"

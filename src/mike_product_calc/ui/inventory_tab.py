@@ -14,6 +14,7 @@ from mike_product_calc.calc.inventory_consumption import (
 )
 from mike_product_calc.data.inventory_view import (
     build_inventory_kpis,
+    check_items_to_inventory_rows,
     classify_inventory_row,
     classify_safety_status,
     is_snapshot_stale,
@@ -218,14 +219,29 @@ def _styler_for_depletion(depletion_urgency_col: pd.Series) -> pd.DataFrame:
 def render_consumption_expander(client) -> None:
     """Render the consumption analysis expander in the inventory tab."""
     with st.expander("\U0001f4ca 消耗分析", expanded=False):
-        # Date range filter
-        today = datetime.now(timezone.utc)
-        default_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        default_end = today
+        # Date range filter — default to check batch range if available
+        list_fn = getattr(client, "list_check_batches", None)
+        default_start_date = None
+        default_end_date = None
+        if callable(list_fn):
+            try:
+                all_batches = list_fn()
+                if len(all_batches) >= 2:
+                    earliest = all_batches[-1]["check_at"]
+                    latest = all_batches[0]["check_at"]
+                    default_start_date = datetime.fromisoformat(earliest.replace("Z", "+00:00")).date()
+                    default_end_date = datetime.fromisoformat(latest.replace("Z", "+00:00")).date()
+            except Exception:
+                pass
+
+        if default_start_date is None:
+            today = datetime.now(timezone.utc)
+            default_start_date = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0).date()
+            default_end_date = today.date()
 
         col_date1, col_date2, col_date3 = st.columns([1, 1, 2])
-        start_date = col_date1.date_input("起始日期", value=default_start.date())
-        end_date = col_date2.date_input("截止日期", value=default_end.date())
+        start_date = col_date1.date_input("起始日期", value=default_start_date)
+        end_date = col_date2.date_input("截止日期", value=default_end_date)
         query_clicked = col_date3.button("查询", type="primary")
 
         query_fn = getattr(client, "query_consumption", None)
@@ -336,26 +352,48 @@ def render_inventory_tab(client) -> None:
     """Render storefront-first inventory dashboard tab."""
     st.title("库存状态")
 
-    try:
-        get_snapshot_fn = getattr(client, "get_latest_inventory_snapshot_at", None)
-        snapshot_at = get_snapshot_fn() if callable(get_snapshot_fn) else None
-        rows = client.list_latest_inventory_rows(limit=5000)
-    except Exception as exc:  # noqa: BLE001 - keep tab resilient to backend schema state
-        if _is_http_404(exc):
-            st.error(
-                "库存快照表尚未就绪（Supabase 返回 404）。"
-                "请先执行 `docs/superpowers/specs/supabase_schema.sql`，"
-                "并确认 `inventory_snapshot_batches` / `v_inventory_latest_item_by_warehouse` 已可访问。"
-            )
-            st.info("数据库就绪后，刷新页面即可使用门店库存驾驶舱。")
-            return
-        st.error(f"库存数据加载失败：{exc}")
-        return
+    # ── Load inventory data: try check data first, fall back to snapshot ──
+    rows = []
+    data_source = "snapshot"
+    check_at_str = None
+    list_check_fn = getattr(client, "list_latest_check_items", None)
+    if callable(list_check_fn):
+        try:
+            check_items = list_check_fn()
+            if check_items:
+                rows = check_items_to_inventory_rows(check_items)
+                data_source = "check"
+                # Get check timestamp from batch
+                batches = client.list_check_batches()
+                if batches:
+                    check_at_str = batches[0].get("check_at")
+        except Exception:
+            pass
 
-    parsed_snapshot_at = _parse_snapshot_time(snapshot_at)
-    if parsed_snapshot_at and is_snapshot_stale(parsed_snapshot_at):
-        st.warning(f"库存快照已超过 2 小时未更新（最近: {snapshot_at}）")
-    elif snapshot_at is None:
+    if not rows:
+        try:
+            get_snapshot_fn = getattr(client, "get_latest_inventory_snapshot_at", None)
+            snapshot_at = get_snapshot_fn() if callable(get_snapshot_fn) else None
+            rows = client.list_latest_inventory_rows(limit=5000)
+            check_at_str = snapshot_at
+        except Exception as exc:  # noqa: BLE001 - keep tab resilient to backend schema state
+            if _is_http_404(exc):
+                st.error(
+                    "库存快照表尚未就绪（Supabase 返回 404）。"
+                    "请先执行 `docs/superpowers/specs/supabase_schema.sql`，"
+                    "并确认 `inventory_snapshot_batches` / `v_inventory_latest_item_by_warehouse` 已可访问。"
+                )
+                st.info("数据库就绪后，刷新页面即可使用门店库存驾驶舱。")
+                return
+            st.error(f"库存数据加载失败：{exc}")
+            return
+
+    parsed_snapshot_at = _parse_snapshot_time(check_at_str)
+    if data_source == "check":
+        st.caption(f"数据来源：最新盘点 ({check_at_str})")
+    elif parsed_snapshot_at and is_snapshot_stale(parsed_snapshot_at):
+        st.warning(f"库存快照已超过 2 小时未更新（最近: {check_at_str}）")
+    elif check_at_str is None:
         st.caption("暂无可用快照时间")
 
     # ── Safety stock management ──────────────────────────────────
@@ -481,14 +519,27 @@ def render_inventory_tab(client) -> None:
     consumption_fn = getattr(client, "query_consumption", None)
     if callable(consumption_fn):
         try:
-            today_utc = datetime.now(timezone.utc)
-            month_start = today_utc.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            consumption_rows = consumption_fn(month_start.isoformat(), today_utc.isoformat())
+            # Default to check batch date range if available, else current month
+            list_fn = getattr(client, "list_check_batches", None)
+            default_start = None
+            default_end = None
+            if callable(list_fn):
+                all_batches = list_fn()
+                if len(all_batches) >= 2:
+                    earliest = all_batches[-1]["check_at"]
+                    latest = all_batches[0]["check_at"]
+                    default_start = datetime.fromisoformat(earliest.replace("Z", "+00:00"))
+                    default_end = datetime.fromisoformat(latest.replace("Z", "+00:00"))
+
+            if default_start is None:
+                today_utc = datetime.now(timezone.utc)
+                default_start = today_utc.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                default_end = today_utc
+
+            consumption_rows = consumption_fn(default_start.isoformat(), default_end.isoformat())
             if consumption_rows:
-                consumption_kpis = build_consumption_kpis(
-                    consumption_rows,
-                    days=max(1, (today_utc - month_start).days),
-                )
+                days = max(1, (default_end - default_start).days) if isinstance(default_end, datetime) else 1
+                consumption_kpis = build_consumption_kpis(consumption_rows, days=days)
             else:
                 consumption_kpis = {
                     "total_consumption_amount": 0, "daily_avg_amount": 0,

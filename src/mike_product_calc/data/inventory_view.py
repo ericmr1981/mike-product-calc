@@ -62,3 +62,40 @@ def is_snapshot_stale(
 ) -> bool:
     current = now_utc or datetime.now(timezone.utc)
     return (current - snapshot_at).total_seconds() > stale_hours * 3600
+
+
+def check_items_to_inventory_rows(items: list[dict]) -> list[dict]:
+    """Convert inventory check items to inventory view format.
+
+    Maps check item fields (system_qty, avg_price, etc.) to the format
+    expected by build_inventory_kpis, shape_inventory_table, etc.
+    """
+    rows: list[dict] = []
+    for item in items:
+        system_qty = float(item.get("system_qty") or 0)
+        avg_price = float(item.get("avg_price") or 0)
+        data_warnings = item.get("data_warnings") or []
+
+        current_amount = round(system_qty * avg_price, 2)
+        is_negative = "negative_stock" in data_warnings
+        has_mismatch = "amount_mismatch" in data_warnings
+
+        rows.append({
+            "item_code": item.get("item_code", ""),
+            "item_name": item.get("item_name", ""),
+            "spec": item.get("spec") or "",
+            "unit": item.get("unit", ""),
+            "category_lv2": item.get("category") or "",
+            "category_lv1": "",
+            "warehouse_name": "",
+            "warehouse_code": "",
+            "stock_qty": system_qty,
+            "available_qty": system_qty,
+            "current_amount": current_amount,
+            "stock_unit_price": avg_price,
+            "is_negative_stock": is_negative,
+            "has_amount_mismatch": has_mismatch,
+            "data_warnings": data_warnings,
+            "_source": "check",
+        })
+    return rows

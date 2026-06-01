@@ -558,6 +558,23 @@ class MpcSupabaseClient:
         resp.raise_for_status()
         return resp.json()
 
+    def list_latest_check_items(self) -> list[dict]:
+        """Fetch items from the most recent inventory check batch.
+
+        Returns items as flat dicts ready for inventory view mapping.
+        Returns empty list if no check batches exist.
+        """
+        batches = self.list_check_batches()
+        if not batches:
+            return []
+        latest_id = batches[0]["id"]
+        params = {"batch_id": f"eq.{latest_id}", "limit": "5000"}
+        resp = requests.get(
+            f"{self._base}/inventory_check_items", headers=self._headers(), params=params
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     # ------------------------------------------------------------------
     # Inventory Delivery Batches
     # ------------------------------------------------------------------
