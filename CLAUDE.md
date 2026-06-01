@@ -85,3 +85,19 @@ A Streamlit + Python decision-support app for 蜜可诗 (Mike) product operation
 - **`tests/test_recipe*.py`** / `tests/test_serving_mgmt.py` — Recipe and serving mgmt tests.
 - **`tests/test_supabase_client.py`** / `tests/test_excel_sync.py` — Supabase integration tests.
 - Tests require `data/蜜可诗产品库.xlsx` to exist (not in repo).
+
+## Tab Documentation
+
+Each tab has 3 docs in `docs/tabs/`:
+
+| Tab | 结构 (Layout) | 数据清单 (Data) | 用户体验 (UX) |
+|-----|-------------|----------------|-------------|
+| 1 概览/校验 | [tab1-结构.md](docs/tabs/tab1-结构.md) | [tab1-数据清单.md](docs/tabs/tab1-数据清单.md) | [tab1-用户体验故事.md](docs/tabs/tab1-用户体验故事.md) |
+| 2 原数据 | [tab2-结构.md](docs/tabs/tab2-结构.md) | [tab2-数据清单.md](docs/tabs/tab2-数据清单.md) | [tab2-用户体验故事.md](docs/tabs/tab2-用户体验故事.md) |
+| 3 原料价格模拟器 | [tab3-结构.md](docs/tabs/tab3-结构.md) | [tab3-数据清单.md](docs/tabs/tab3-数据清单.md) | [tab3-用户体验故事.md](docs/tabs/tab3-用户体验故事.md) |
+| 4 产销计划 | [tab4-结构.md](docs/tabs/tab4-结构.md) | [tab4-数据清单.md](docs/tabs/tab4-数据清单.md) | [tab4-用户体验故事.md](docs/tabs/tab4-用户体验故事.md) |
+| 5 原料管理 | [tab5-结构.md](docs/tabs/tab5-结构.md) | [tab5-数据清单.md](docs/tabs/tab5-数据清单.md) | [tab5-用户体验故事.md](docs/tabs/tab5-用户体验故事.md) |
+| 6 配方管理 | [tab6-结构.md](docs/tabs/tab6-结构.md) | [tab6-数据清单.md](docs/tabs/tab6-数据清单.md) | [tab6-用户体验故事.md](docs/tabs/tab6-用户体验故事.md) |
+| 7 出品规格 | [tab7-结构.md](docs/tabs/tab7-结构.md) | [tab7-数据清单.md](docs/tabs/tab7-数据清单.md) | [tab7-用户体验故事.md](docs/tabs/tab7-用户体验故事.md) |
+| 8 门店库存 | [tab8-结构.md](docs/tabs/tab8-结构.md) | [tab8-数据清单.md](docs/tabs/tab8-数据清单.md) | [tab8-用户体验故事.md](docs/tabs/tab8-用户体验故事.md) |
+| 9 覆盖天数分析 | [tab9-结构.md](docs/tabs/tab9-结构.md) | [tab9-数据清单.md](docs/tabs/tab9-数据清单.md) | [tab9-用户体验故事.md](docs/tabs/tab9-用户体验故事.md) |
