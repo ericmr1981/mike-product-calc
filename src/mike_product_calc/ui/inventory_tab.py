@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 import requests
@@ -155,16 +155,24 @@ def _build_warehouse_label_map(df: pd.DataFrame) -> dict[str, str]:
     return out
 
 
-def _init_safety_stock(unique_items: list[dict]) -> dict[str, float]:
-    """Initialize safety stock map from session state or build fresh from items."""
+def _init_safety_stock(unique_items: list[dict], *, default_map: dict[str, float] | None = None) -> dict[str, float]:
+    """Initialize safety stock map from session state or build fresh from items.
+
+    Items without a manual setting (0.0) get their default from *default_map*
+    or stay at 0.0.
+    """
     if "inv_safety_stock_map" not in st.session_state:
         st.session_state["inv_safety_stock_map"] = {}
     existing = st.session_state["inv_safety_stock_map"]
-    # Ensure every item_code has at least a default entry
+    dm = default_map or {}
     for item in unique_items:
         code = str(item.get("item_code", ""))
-        if code and code not in existing:
-            existing[code] = 0.0
+        if not code:
+            continue
+        if code not in existing:
+            existing[code] = dm.get(code, 0.0)
+        elif existing[code] == 0.0 and dm.get(code, 0.0) > 0:
+            existing[code] = dm[code]
     return existing
 
 
@@ -219,30 +227,35 @@ def _styler_for_depletion(depletion_urgency_col: pd.Series) -> pd.DataFrame:
 def render_consumption_expander(client) -> None:
     """Render the consumption analysis expander in the inventory tab."""
     with st.expander("\U0001f4ca 消耗分析", expanded=False):
-        # Date range filter — default to check batch range if available
+        # Build available month options from check batches
         list_fn = getattr(client, "list_check_batches", None)
-        default_start_date = None
-        default_end_date = None
+        month_options: list[str] = []
         if callable(list_fn):
             try:
                 all_batches = list_fn()
-                if len(all_batches) >= 2:
-                    earliest = all_batches[-1]["check_at"]
-                    latest = all_batches[0]["check_at"]
-                    default_start_date = datetime.fromisoformat(earliest.replace("Z", "+00:00")).date()
-                    default_end_date = datetime.fromisoformat(latest.replace("Z", "+00:00")).date()
+                seen = set()
+                for b in all_batches:
+                    dt = datetime.fromisoformat(b["check_at"].replace("Z", "+00:00"))
+                    key = dt.strftime("%Y-%m")
+                    if key not in seen:
+                        seen.add(key)
+                        month_options.append(key)
+                month_options.sort(reverse=True)
             except Exception:
                 pass
 
-        if default_start_date is None:
-            today = datetime.now(timezone.utc)
-            default_start_date = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0).date()
-            default_end_date = today.date()
+        if not month_options:
+            month_options = [datetime.now(timezone.utc).strftime("%Y-%m")]
 
-        col_date1, col_date2, col_date3 = st.columns([1, 1, 2])
-        start_date = col_date1.date_input("起始日期", value=default_start_date)
-        end_date = col_date2.date_input("截止日期", value=default_end_date)
-        query_clicked = col_date3.button("查询", type="primary")
+        selected_month = st.selectbox("选择月份", options=month_options, index=0)
+        year_str, month_str = selected_month.split("-")
+        ym = int(year_str), int(month_str)
+        if ym[1] == 12:
+            next_month = datetime(ym[0] + 1, 1, 1)
+        else:
+            next_month = datetime(ym[0], ym[1] + 1, 1)
+        start_date = datetime(ym[0], ym[1], 1).date()
+        end_date = (next_month - timedelta(days=1)).date()
 
         query_fn = getattr(client, "query_consumption", None)
         if not callable(query_fn):
@@ -269,6 +282,10 @@ def render_consumption_expander(client) -> None:
         matched = sum(1 for r in consumption_rows if r.get("item_type") == "matched")
         new_items_count = sum(1 for r in consumption_rows if r.get("item_type") == "new")
         st.caption(f"统计区间：{days} 天 | 匹配品项：{matched} 项 | 新品项（仅期末有数据）：{new_items_count} 项")
+
+        # KPI row
+        consumption_kpis = build_consumption_kpis(consumption_rows, days=days)
+        render_consumption_kpi_row(consumption_kpis)
 
         # Build table and controls
         df = build_consumption_table(consumption_rows, days=days)
@@ -388,17 +405,54 @@ def render_inventory_tab(client) -> None:
             st.error(f"库存数据加载失败：{exc}")
             return
 
-    parsed_snapshot_at = _parse_snapshot_time(check_at_str)
+    # Also fetch snapshot timestamp for display
+    snapshot_at_str: str | None = None
     if data_source == "check":
-        st.caption(f"数据来源：最新盘点 ({check_at_str})")
-    elif parsed_snapshot_at and is_snapshot_stale(parsed_snapshot_at):
-        st.warning(f"库存快照已超过 2 小时未更新（最近: {check_at_str}）")
-    elif check_at_str is None:
-        st.caption("暂无可用快照时间")
+        try:
+            get_snapshot_fn = getattr(client, "get_latest_inventory_snapshot_at", None)
+            if callable(get_snapshot_fn):
+                snapshot_at_str = get_snapshot_fn()
+        except Exception:
+            pass
+
+    if data_source == "check":
+        line = f"\U0001f4e5 盘点数据：{check_at_str}"
+        if snapshot_at_str:
+            line += f" ｜ 库存快照更新时间：{snapshot_at_str}"
+        st.caption(line)
+    elif check_at_str:
+        st.caption(f"\U0001f4e5 库存快照：{check_at_str}")
+        parsed = _parse_snapshot_time(check_at_str)
+        if parsed and is_snapshot_stale(parsed):
+            st.warning("库存快照已超过 2 小时未更新")
+    else:
+        st.caption("暂无可用时间信息")
 
     # ── Safety stock management ──────────────────────────────────
     unique_items_raw = pd.DataFrame(rows)[["item_code", "item_name", "unit"]].drop_duplicates(subset="item_code").to_dict("records")
-    _init_safety_stock(unique_items_raw)
+
+    # Compute safety stock defaults from consumption (daily_qty * 7 days)
+    safety_defaults: dict[str, float] = {}
+    consumption_fn = getattr(client, "query_consumption", None)
+    list_fn = getattr(client, "list_check_batches", None)
+    if callable(consumption_fn) and callable(list_fn):
+        try:
+            all_batches = list_fn()
+            if len(all_batches) >= 2:
+                earliest_dt = datetime.fromisoformat(all_batches[-1]["check_at"].replace("Z", "+00:00"))
+                latest_dt = datetime.fromisoformat(all_batches[0]["check_at"].replace("Z", "+00:00"))
+                rows_c = consumption_fn(earliest_dt.isoformat(), latest_dt.isoformat())
+                if rows_c:
+                    days = max(1, (latest_dt - earliest_dt).days)
+                    for r in rows_c:
+                        qty = r.get("consumption_qty")
+                        if qty is not None and r.get("item_type") == "matched":
+                            daily = float(qty) / days
+                            safety_defaults[r["item_code"]] = round(daily * 7, 2)
+        except Exception:
+            pass
+
+    _init_safety_stock(unique_items_raw, default_map=safety_defaults)
     safety_map = st.session_state["inv_safety_stock_map"]
 
     with st.expander("安全库存设置", expanded=False):
@@ -495,11 +549,11 @@ def render_inventory_tab(client) -> None:
     )
     kpis = build_inventory_kpis(filtered_df)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("总品项", kpis["total"])
-    c2.metric("缺货", kpis["out_of_stock"])
-    c3.metric("低库存", kpis["low_stock"])
-    c4.metric("异常", kpis["abnormal"])
+    inv_cols = st.columns(7)
+    inv_cols[0].metric("总品项", kpis["total"])
+    inv_cols[1].metric("缺货", kpis["out_of_stock"])
+    inv_cols[2].metric("低库存", kpis["low_stock"])
+    inv_cols[3].metric("异常", kpis["abnormal"])
 
     total_amt = kpis["total_amount"]
     tool_amt = kpis["tool_amount"]
@@ -510,47 +564,9 @@ def render_inventory_tab(client) -> None:
             return f"¥{amt / 10000:,.2f}万"
         return f"¥{amt:,.2f}"
 
-    amt_col1, amt_col2, amt_col3 = st.columns(3)
-    amt_col1.metric("库存总额", _fmt_amt(total_amt))
-    amt_col2.metric("原料/包材", _fmt_amt(other_amt))
-    amt_col3.metric("工具", _fmt_amt(tool_amt))
-
-    # ── Consumption KPIs ──────────────────────────────────────────
-    consumption_fn = getattr(client, "query_consumption", None)
-    if callable(consumption_fn):
-        try:
-            # Default to check batch date range if available, else current month
-            list_fn = getattr(client, "list_check_batches", None)
-            default_start = None
-            default_end = None
-            if callable(list_fn):
-                all_batches = list_fn()
-                if len(all_batches) >= 2:
-                    earliest = all_batches[-1]["check_at"]
-                    latest = all_batches[0]["check_at"]
-                    default_start = datetime.fromisoformat(earliest.replace("Z", "+00:00"))
-                    default_end = datetime.fromisoformat(latest.replace("Z", "+00:00"))
-
-            if default_start is None:
-                today_utc = datetime.now(timezone.utc)
-                default_start = today_utc.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                default_end = today_utc
-
-            consumption_rows = consumption_fn(default_start.isoformat(), default_end.isoformat())
-            if consumption_rows:
-                days = max(1, (default_end - default_start).days) if isinstance(default_end, datetime) else 1
-                consumption_kpis = build_consumption_kpis(consumption_rows, days=days)
-            else:
-                consumption_kpis = {
-                    "total_consumption_amount": 0, "daily_avg_amount": 0,
-                    "consumption_item_count": 0, "total_matched_items": 0,
-                    "total_new_items": 0, "fastest_item_name": "",
-                    "fastest_item_daily": 0, "top_category_name": "",
-                    "top_category_amount": 0,
-                }
-            render_consumption_kpi_row(consumption_kpis)
-        except Exception:
-            pass
+    inv_cols[4].metric("库存总额", _fmt_amt(total_amt))
+    inv_cols[5].metric("原料/包材", _fmt_amt(other_amt))
+    inv_cols[6].metric("工具", _fmt_amt(tool_amt))
 
     if not rows:
         st.info("暂无库存快照数据")

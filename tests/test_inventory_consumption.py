@@ -150,21 +150,21 @@ def test_compute_consumption_basic(monkeypatch: pytest.MonkeyPatch) -> None:
     start_items = {
         "WP0013": {
             "item_code": "WP0013", "item_name": "冰碗5oz",
-            "unit": "箱", "category": "包材", "system_qty": 1.818, "avg_price": 328,
+            "unit": "箱", "category": "包材", "second_check_qty": 1.818, "avg_price": 328,
         },
         "WP0014": {
             "item_code": "WP0014", "item_name": "冰碗8oz",
-            "unit": "箱", "category": "包材", "system_qty": 0.850, "avg_price": 448,
+            "unit": "箱", "category": "包材", "second_check_qty": 0.850, "avg_price": 448,
         },
     }
     end_items = {
         "WP0013": {
             "item_code": "WP0013", "item_name": "冰碗5oz",
-            "unit": "箱", "category": "包材", "system_qty": 1.796,
+            "unit": "箱", "category": "包材", "second_check_qty": 1.796,
         },
         "WP0014": {
             "item_code": "WP0014", "item_name": "冰碗8oz",
-            "unit": "箱", "category": "包材", "system_qty": 0.750,
+            "unit": "箱", "category": "包材", "second_check_qty": 0.750,
         },
     }
     result = client._compute_consumption(
@@ -199,11 +199,11 @@ def test_compute_consumption_new_items(monkeypatch: pytest.MonkeyPatch) -> None:
 
     client = MpcSupabaseClient(url="http://localhost", key="test")
     start_items = {
-        "A": {"item_code": "A", "system_qty": 10, "avg_price": 50},
+        "A": {"item_code": "A", "second_check_qty": 10, "avg_price": 50},
     }
     end_items = {
-        "A": {"item_code": "A", "system_qty": 5},
-        "B": {"item_code": "B", "system_qty": 15},
+        "A": {"item_code": "A", "second_check_qty": 5},
+        "B": {"item_code": "B", "second_check_qty": 15},
     }
     result = client._compute_consumption(
         start_items, end_items, "2026-05-01", "2026-05-31"

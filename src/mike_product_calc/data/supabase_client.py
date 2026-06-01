@@ -730,13 +730,13 @@ class MpcSupabaseClient:
             e = end_items.get(code, {})
 
             start_qty = (
-                float(s.get("system_qty"))
-                if s and s.get("system_qty") is not None
+                float(s.get("second_check_qty"))
+                if s and s.get("second_check_qty") is not None
                 else None
             )
             end_qty = (
-                float(e.get("system_qty"))
-                if e and e.get("system_qty") is not None
+                float(e.get("second_check_qty"))
+                if e and e.get("second_check_qty") is not None
                 else None
             )
             avg_price = (
