@@ -125,8 +125,7 @@ def test_cli_state_restore():
 # ── 2. validate ─────────────────────────────────────────────────────────────────
 
 def test_cli_validate_json():
-    assert XLSX.exists()
-    r = _run_cli("validate", str(XLSX), "--format", "json")
+    r = _run_cli("validate", "--format", "json")
     # Exit 0 (no errors) or 2 (has errors) — both are valid business outcomes
     assert r.returncode in (0, 2), r.stderr
     payload = json.loads(r.stdout)
@@ -135,15 +134,10 @@ def test_cli_validate_json():
     assert payload["summary"]["total"] >= 0
 
 
-def test_cli_validate_missing_file():
-    r = _run_cli("validate", "/nonexistent/path.xlsx")
-    assert r.returncode == 1
-
-
 # ── 3. sku-list ────────────────────────────────────────────────────────────────
 
 def test_cli_sku_list_json():
-    r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--only-status", "上线",
+    r = _run_cli("sku-list", "--basis", "factory", "--only-status", "上线",
                  "--limit", "3", "--format", "json")
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
@@ -156,7 +150,7 @@ def test_cli_sku_list_json():
 # ── 4. profit-oracle ───────────────────────────────────────────────────────────
 
 def test_cli_profit_oracle_json():
-    r = _run_cli("profit-oracle", str(XLSX), "--basis", "both", "--only-status", "上线",
+    r = _run_cli("profit-oracle", "--basis", "both", "--only-status", "上线",
                  "--margin-delta-abs", "0.1", "--rmb-delta-abs", "1", "--top", "3",
                  "--format", "json")
     assert r.returncode in (0, 2), r.stderr
@@ -168,11 +162,11 @@ def test_cli_profit_oracle_json():
 # ── 5. target-pricing ─────────────────────────────────────────────────────────
 
 def test_cli_target_pricing_json():
-    r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--only-status", "上线",
+    r = _run_cli("sku-list", "--basis", "factory", "--only-status", "上线",
                  "--limit", "1", "--format", "json")
     assert r.returncode == 0, r.stderr
     sku = json.loads(r.stdout)["rows"][0]["product_key"]
-    r = _run_cli("target-pricing", str(XLSX), "--product-key", sku,
+    r = _run_cli("target-pricing", "--product-key", sku,
                  "--target-margin", "0.35", "--basis", "store", "--format", "json")
     assert r.returncode in (0, 1), r.stderr
     if r.returncode == 0:
@@ -184,7 +178,7 @@ def test_cli_target_pricing_json():
 # ── 6. material-sim ────────────────────────────────────────────────────────────
 
 def test_cli_material_sim_versions():
-    r = _run_cli("material-sim", str(XLSX), "versions")
+    r = _run_cli("material-sim", "versions")
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     assert payload["cmd"] == "material-sim-versions"
@@ -192,7 +186,7 @@ def test_cli_material_sim_versions():
 
 
 def test_cli_material_sim_simulate():
-    r = _run_cli("material-sim", str(XLSX), "simulate",
+    r = _run_cli("material-sim", "simulate",
                  "--version", "test-version", "--basis", "store",
                  "--adj", "芒果=10", "--format", "json")
     assert r.returncode == 0, r.stderr
@@ -201,7 +195,7 @@ def test_cli_material_sim_simulate():
 
 
 def test_cli_material_sim_compare():
-    r = _run_cli("material-sim", str(XLSX), "compare", "当前", "旺季",
+    r = _run_cli("material-sim", "compare", "当前", "旺季",
                  "--basis", "store",
                  "--adj-a", "芒果=10",
                  "--adj-b", "芒果=15",
@@ -214,11 +208,11 @@ def test_cli_material_sim_compare():
 # ── 7. prep-plan ─────────────────────────────────────────────────────────────
 
 def test_cli_prep_plan_json():
-    r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--only-status", "上线",
+    r = _run_cli("sku-list", "--basis", "factory", "--only-status", "上线",
                  "--limit", "1", "--format", "json")
     assert r.returncode == 0, r.stderr
     sku = json.loads(r.stdout)["rows"][0]["product_key"]
-    r = _run_cli("prep-plan", str(XLSX), "--basis", "store",
+    r = _run_cli("prep-plan", "--basis", "store",
                  "--sku", f"{sku}=5", "--lead-days", "3",
                  "--format", "json")
     assert r.returncode == 0, r.stderr
@@ -228,18 +222,18 @@ def test_cli_prep_plan_json():
 
 
 def test_cli_prep_plan_missing_sku():
-    r = _run_cli("prep-plan", str(XLSX), "--basis", "store")
+    r = _run_cli("prep-plan", "--basis", "store")
     assert r.returncode == 1
 
 
 # ── 8. purchase-suggest ───────────────────────────────────────────────────────
 
 def test_cli_purchase_suggest_json():
-    r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--only-status", "上线",
+    r = _run_cli("sku-list", "--basis", "factory", "--only-status", "上线",
                  "--limit", "1", "--format", "json")
     assert r.returncode == 0, r.stderr
     sku = json.loads(r.stdout)["rows"][0]["product_key"]
-    r = _run_cli("purchase-suggest", str(XLSX), "--basis", "store",
+    r = _run_cli("purchase-suggest", "--basis", "store",
                  "--sku", f"{sku}=5", "--format", "json")
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
@@ -247,14 +241,11 @@ def test_cli_purchase_suggest_json():
     assert "rows" in payload
 
 
-# ── 9. State auto-load ───────────────────────────────────────────────────────
+# ── 9. Basic sku-list ────────────────────────────────────────────────────────
 
-def test_cli_auto_load_state_xlsx():
-    """Commands should auto-load xlsx from state when not provided."""
-    sd = _state_dir()
-    _run_cli("state", "init", "--xlsx", str(XLSX), state_dir=sd)
-    # sku-list without explicit xlsx should work
-    r = _run_cli("sku-list", "--basis", "factory", "--limit", "3", "--format", "json", state_dir=sd)
+def test_cli_sku_list_basic():
+    """sku-list without any args should produce JSON output."""
+    r = _run_cli("sku-list", "--basis", "factory", "--limit", "3", "--format", "json")
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     assert payload["count"] >= 1
@@ -287,12 +278,49 @@ def test_cli_inventory_sync_dry_run(tmp_path: Path):
     assert payload["rows"][0]["status"] == "dry_run"
 
 
+def test_cli_inventory_check_sync_dry_run(tmp_path: Path):
+    f = tmp_path / "盘点单明细2025年06月01日.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append([
+        "品项编码", "品项名称", "品项规格", "品项类别", "库存单位",
+        "初盘数量", "复盘数量", "系统库存", "盘点差异", "库存均价", "差异金额", "明细状态",
+    ])
+    ws.append([
+        "ITEM001", "测试原料", "1KG", "辅料", "包",
+        100, 98, 100, -2, 20.0, -40.0, "已审核",
+    ])
+    wb.save(f)
+    r = _run_cli("inventory", "check-sync", str(f), "--dry-run")
+    assert r.returncode == 0, r.stderr
+    payload = json.loads(r.stdout)
+    assert payload["cmd"] == "inventory-check-sync"
+    assert payload["count"] == 1
+    assert payload["rows"][0]["status"] == "dry_run"
+
+
+def test_cli_inventory_delivery_sync_dry_run(tmp_path: Path):
+    f = tmp_path / "到货记录20250601.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["品项编码", "品项名称", "品项规格", "品项类别", "库存单位", "数量"])
+    ws.append(["ITEM001", "测试原料", "1KG", "辅料", "包", 50])
+    wb.save(f)
+    r = _run_cli("inventory", "delivery-sync", str(f), "--dry-run")
+    assert r.returncode == 0, r.stderr
+    payload = json.loads(r.stdout)
+    assert payload["cmd"] == "inventory-delivery-sync"
+    assert payload["count"] == 1
+    assert payload["rows"][0]["status"] == "dry_run"
+
+
 # ── 10. JSON output parseability ─────────────────────────────────────────────
 
 def test_cli_json_stderr_clean():
     """stdout must be pure JSON with no extra text."""
-    r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--limit", "3",
-                 "--format", "json")
+    r = _run_cli("sku-list", "--basis", "factory", "--limit", "3", "--format", "json")
     assert r.returncode == 0, r.stderr
     # Must not contain non-JSON text before/after
     stripped = r.stdout.strip()
@@ -305,12 +333,11 @@ def test_cli_json_stderr_clean():
 
 def test_cli_exit_code_2_on_validation_errors():
     """profit-oracle with strict thresholds should exit 2 when violations found."""
-    sd = _state_dir()
-    r = _run_cli("profit-oracle", str(XLSX), "--basis", "both",
+    r = _run_cli("profit-oracle", "--basis", "both",
                  "--only-status", "上线",
                  "--margin-delta-abs", "1e-8",  # extremely strict
                  "--rmb-delta-abs", "0.001",
-                 "--top", "3", "--format", "json", state_dir=sd)
+                 "--top", "3", "--format", "json")
     # exit_code field in payload tells us if violations were found
     payload = json.loads(r.stdout)
     # If there are violations, exit code should be 2
@@ -324,7 +351,7 @@ def test_cli_exit_code_2_on_validation_errors():
 def test_cli_out_flag_writes_file():
     with TemporaryDirectory() as td:
         out_file = Path(td) / "output.json"
-        r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--limit", "3",
+        r = _run_cli("sku-list", "--basis", "factory", "--limit", "3",
                      "--format", "json", "--out", str(out_file))
         assert r.returncode == 0, r.stderr
         assert out_file.exists()
@@ -351,11 +378,11 @@ def test_cli_help_smoke():
 
 def test_cli_coverage_estimate_basic():
     """coverage-estimate with --sku returns JSON with sku_coverage and material_coverage."""
-    r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--only-status", "上线",
+    r = _run_cli("sku-list", "--basis", "factory", "--only-status", "上线",
                  "--limit", "1", "--format", "json")
     assert r.returncode == 0, r.stderr
     sku = json.loads(r.stdout)["rows"][0]["product_key"]
-    r = _run_cli("coverage-estimate", str(XLSX), "--basis", "store",
+    r = _run_cli("coverage-estimate", "--basis", "store",
                  "--sku", f"{sku}=140", "--format", "json")
     # coverage-estimate tries Supabase; if not available it should still return 0
     # with empty inventory data
@@ -368,13 +395,13 @@ def test_cli_coverage_estimate_basic():
 
 def test_cli_coverage_estimate_selections_json(tmp_path):
     """coverage-estimate with --selections-json also works."""
-    r = _run_cli("sku-list", str(XLSX), "--basis", "factory", "--only-status", "上线",
+    r = _run_cli("sku-list", "--basis", "factory", "--only-status", "上线",
                  "--limit", "1", "--format", "json")
     assert r.returncode == 0, r.stderr
     sku = json.loads(r.stdout)["rows"][0]["product_key"]
     sel = tmp_path / "selections.json"
     sel.write_text(json.dumps({sku: 140}), encoding="utf-8")
-    r = _run_cli("coverage-estimate", str(XLSX), "--basis", "store",
+    r = _run_cli("coverage-estimate", "--basis", "store",
                  "--selections-json", str(sel), "--format", "json")
     assert r.returncode == 0, r.stderr
     data = json.loads(r.stdout)
@@ -384,5 +411,5 @@ def test_cli_coverage_estimate_selections_json(tmp_path):
 
 def test_cli_coverage_estimate_missing_sku():
     """coverage-estimate without --sku returns error."""
-    r = _run_cli("coverage-estimate", str(XLSX), "--basis", "store")
+    r = _run_cli("coverage-estimate", "--basis", "store")
     assert r.returncode == 1

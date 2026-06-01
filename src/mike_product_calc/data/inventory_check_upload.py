@@ -386,6 +386,30 @@ def sync_check_inventory_file(
     }
 
 
+def discover_check_files(path: Path, pattern: str = "盘点*.xlsx") -> list[Path]:
+    """Discover inventory check xlsx files from a file path or directory."""
+    if path.is_file():
+        return [path]
+    if not path.exists():
+        raise InventoryCheckUploadError(f"path_not_found: {path}")
+    files = sorted(path.glob(pattern))
+    if not files:
+        raise InventoryCheckUploadError(f"no_files_matched: {pattern}")
+    return files
+
+
+def discover_delivery_files(path: Path, pattern: str = "到货记录*.xlsx") -> list[Path]:
+    """Discover delivery xlsx files from a file path or directory."""
+    if path.is_file():
+        return [path]
+    if not path.exists():
+        raise InventoryCheckUploadError(f"path_not_found: {path}")
+    files = sorted(path.glob(pattern))
+    if not files:
+        raise InventoryCheckUploadError(f"no_files_matched: {pattern}")
+    return files
+
+
 def sync_delivery_file(
     client: MpcSupabaseClient | None,
     file_path: Path,

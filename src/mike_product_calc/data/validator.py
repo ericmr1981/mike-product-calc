@@ -599,7 +599,8 @@ def _material_gaps(sheets: Dict[str, pd.DataFrame]) -> List[ValidationIssue]:
 
     # Build numeric series for each relevant price column
     num_price = pd.to_numeric(raw["加价后单价"], errors="coerce")
-    num_base = pd.to_numeric(raw.get("加价前单价", raw["加价前成本"]), errors="coerce")
+    base_col = "加价前成本" if "加价前成本" in raw.columns else "加价前单价"
+    num_base = pd.to_numeric(raw[base_col], errors="coerce")
 
     # Gap: 加价后单价 is NaN or <= 0 while a base price column is also <= 0 / NaN
     gap_mask = (num_price.isna() | (num_price <= 0)) & (num_base.isna() | (num_base <= 0))

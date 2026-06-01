@@ -58,7 +58,6 @@ from mike_product_calc.calc.coverage_analysis import (
     compute_coverage,
 )
 from mike_product_calc.calc.purchase_suggestion import build_purchase_list
-from mike_product_calc.data.loader import load_workbook
 from mike_product_calc.data.validator import issues_to_dataframe, issues_to_report, validate_workbook
 from mike_product_calc.state import MpcState, get_store
 from mike_product_calc.data.upload import (
@@ -66,6 +65,14 @@ from mike_product_calc.data.upload import (
     DuplicateFileError,
 )
 from mike_product_calc.data.cli_supabase import get_client
+from mike_product_calc.data.supabase_adapter import build_sheets
+from mike_product_calc.data.inventory_check_upload import (
+    InventoryCheckUploadError,
+    discover_check_files,
+    discover_delivery_files,
+    sync_check_inventory_file,
+    sync_delivery_file,
+)
 from mike_product_calc.data.inventory_upload import (
     InventoryUploadError,
     discover_inventory_files,
@@ -154,16 +161,14 @@ def _load_sku_qty_from_args(args: argparse.Namespace) -> Dict[str, float]:
     return out
 
 
-def _load_sheets(xlsx: str):
-    """Load workbook sheets (shared by all commands)."""
-    try:
-        return load_workbook(xlsx).sheets
-    except FileNotFoundError:
-        sys.stderr.write(f"Error: xlsx not found: {xlsx}\n")
+def _load_sheets() -> dict[str, pd.DataFrame]:
+    """Load sheets from Supabase. Requires SUPABASE_URL and SUPABASE_SERVICE_KEY."""
+    client = get_client()
+    sheets = build_sheets(client)
+    if not sheets:
+        sys.stderr.write("Error: no data found in Supabase. Is the database empty?\n")
         raise SystemExit(1)
-    except Exception as exc:
-        sys.stderr.write(f"Error loading workbook: {exc}\n")
-        raise SystemExit(1)
+    return sheets
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -275,9 +280,8 @@ def cmd_state_snapshots_list(args: argparse.Namespace) -> int:
 # ══════════════════════════════════════════════════════════════════════════════════
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    """Validate workbook and emit issue report."""
-    xlsx = _ensure_xlsx_from_args(args)
-    wb_sheets = _load_sheets(xlsx)
+    """Validate workbook data consistency and emit issue report."""
+    wb_sheets = _load_sheets()
     issues = validate_workbook(wb_sheets)
     df = issues_to_dataframe(issues)
     has_error = any(i.severity == "error" for i in issues)
@@ -286,7 +290,6 @@ def cmd_validate(args: argparse.Namespace) -> int:
     sev = report.severity_counts
     payload = {
         "cmd": "validate",
-        "xlsx": xlsx,
         "has_error": has_error,
         "summary": {
             "total": int(report.total_issues),
@@ -314,8 +317,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 def cmd_profit_oracle(args: argparse.Namespace) -> int:
     """F-002 acceptance oracle: profit/margin consistency checks."""
-    xlsx = _ensure_xlsx_from_args(args)
-    sheets = _load_sheets(xlsx)
+    sheets = _load_sheets()
     only_status = _parse_only_status(args.only_status)
     bases = ["factory", "store"] if args.basis == "both" else [args.basis]
     thresholds = ProfitOracleThresholds(
@@ -337,7 +339,7 @@ def cmd_profit_oracle(args: argparse.Namespace) -> int:
         reports.append({"basis": b, "rows": int(len(df)), "bad_margin": bad_margin,
                          "bad_profit": bad_profit, "bad_cost": bad_cost,
                          "thresholds": asdict(thresholds)})
-    payload = {"cmd": "profit-oracle", "xlsx": xlsx, "only_status": only_status,
+    payload = {"cmd": "profit-oracle", "only_status": only_status,
                "reports": reports, "exit_code": exit_code}
     if args.format == "json":
         _dump_json(payload, out=args.out)
@@ -357,13 +359,12 @@ def cmd_profit_oracle(args: argparse.Namespace) -> int:
 
 def cmd_sku_list(args: argparse.Namespace) -> int:
     """List available SKU product_keys (machine-friendly)."""
-    xlsx = _ensure_xlsx_from_args(args)
-    sheets = _load_sheets(xlsx)
+    sheets = _load_sheets()
     only_status = _parse_only_status(args.only_status)
     df = sku_profit_table(sheets, basis=args.basis, only_status=only_status,
                           cost_mode=getattr(args, "cost_mode", "computed"))
     if df.empty:
-        _dump_json({"cmd": "sku-list", "xlsx": xlsx, "count": 0, "rows": []}, out=args.out)
+        _dump_json({"cmd": "sku-list", "count": 0, "rows": []}, out=args.out)
         return 0
     if args.limit:
         df = df.head(int(args.limit)).copy()
@@ -371,7 +372,7 @@ def cmd_sku_list(args: argparse.Namespace) -> int:
             "cost_source", "gross_margin"]
     cols = [c for c in cols if c in df.columns]
     if args.format == "json":
-        payload = {"cmd": "sku-list", "xlsx": xlsx, "basis": args.basis,
+        payload = {"cmd": "sku-list", "basis": args.basis,
                    "only_status": only_status, "count": int(len(df)), "rows": df[cols].to_dict(orient="records")}
         _dump_json(payload, out=args.out)
         return 0
@@ -381,8 +382,7 @@ def cmd_sku_list(args: argparse.Namespace) -> int:
 
 def cmd_target_pricing(args: argparse.Namespace) -> int:
     """F-003: target-cost reverse pricing for a SKU."""
-    xlsx = _ensure_xlsx_from_args(args)
-    sheets = _load_sheets(xlsx)
+    sheets = _load_sheets()
     try:
         summary, df = target_pricing(
             sheets,
@@ -395,12 +395,12 @@ def cmd_target_pricing(args: argparse.Namespace) -> int:
         sys.stderr.write(f"Error: {exc}\n")
         return 1
     if df.empty:
-        payload = {"cmd": "target-pricing", "xlsx": xlsx, "product_key": args.product_key,
+        payload = {"cmd": "target-pricing", "product_key": args.product_key,
                    "target_margin": float(args.target_margin), "rows": []}
         _dump_json(payload, out=args.out)
         return 0
     cols = [c for c in df.columns if c in df.columns]
-    payload = {"cmd": "target-pricing", "xlsx": xlsx, "product_key": args.product_key,
+    payload = {"cmd": "target-pricing", "product_key": args.product_key,
                "target_margin": float(args.target_margin), "basis": args.basis,
                "summary": asdict(summary), "count": int(len(df)), "rows": df[cols].to_dict(orient="records")}
     _dump_json(payload, out=args.out)
@@ -409,8 +409,7 @@ def cmd_target_pricing(args: argparse.Namespace) -> int:
 
 def cmd_material_sim(args: argparse.Namespace) -> int:
     """F-004: material price simulator — version management + comparison."""
-    xlsx = _ensure_xlsx_from_args(args)
-    sheets = _load_sheets(xlsx)
+    sheets = _load_sheets()
     sub = args.subcommand
 
     if sub == "versions":
@@ -439,7 +438,7 @@ def cmd_material_sim(args: argparse.Namespace) -> int:
                              "gp_delta_ab", "gm_delta_pp_ab", "high_risk"]
                 if c in df.columns]
         high_risk_count = int(df["high_risk"].sum()) if "high_risk" in df.columns else 0
-        payload = {"cmd": "material-sim-compare", "xlsx": xlsx, "scenario_a": a_name,
+        payload = {"cmd": "material-sim-compare", "scenario_a": a_name,
                    "scenario_b": b_name, "basis": args.basis, "high_risk_count": high_risk_count,
                    "count": int(len(df)), "rows": df[cols].to_dict(orient="records")}
         _dump_json(payload, out=args.out)
@@ -455,7 +454,7 @@ def cmd_material_sim(args: argparse.Namespace) -> int:
         cols = [c for c in ["product_key", "name", "category", "status", "price", "cost",
                              "adjusted_cost", "has_adjusted", "gross_profit", "adjusted_gross_profit",
                              "gp_delta", "margin_delta_pp"] if c in df.columns]
-        payload = {"cmd": "material-sim-simulate", "xlsx": xlsx, "version": scenario.name,
+        payload = {"cmd": "material-sim-simulate", "version": scenario.name,
                    "basis": args.basis, "count": int(len(df)), "rows": df[cols].to_dict(orient="records")}
         _dump_json(payload, out=args.out)
         return 0
@@ -491,8 +490,7 @@ def _build_scenario_from_args(args: argparse.Namespace, suffix: str, state: MpcS
 
 def cmd_prep_plan(args: argparse.Namespace) -> int:
     """F-006: BOM expansion → material demand table."""
-    xlsx = _ensure_xlsx_from_args(args)
-    sheets = _load_sheets(xlsx)
+    sheets = _load_sheets()
     sku_qty = _load_sku_qty_from_args(args)
     if not sku_qty:
         sys.stderr.write("Error: --sku or --selections-json required for prep-plan\n")
@@ -511,7 +509,7 @@ def cmd_prep_plan(args: argparse.Namespace) -> int:
         default_safety_stock=float(args.safety_stock) if args.safety_stock else 0.0,
     )
     if df.empty:
-        payload = {"cmd": "prep-plan", "xlsx": xlsx, "basis": args.basis, "count": 0, "rows": []}
+        payload = {"cmd": "prep-plan", "basis": args.basis, "count": 0, "rows": []}
         _dump_json(payload, out=args.out)
         return 0
     cols = [c for c in ["material", "level", "purchase_unit", "lead_days",
@@ -519,7 +517,7 @@ def cmd_prep_plan(args: argparse.Namespace) -> int:
                          "total_purchase_qty", "unit_price", "total_cost",
                          "is_gap", "gap_reason", "is_semi_finished", "sku_keys", "latest_order_date"]
              if c in df.columns]
-    payload = {"cmd": "prep-plan", "xlsx": xlsx, "basis": args.basis,
+    payload = {"cmd": "prep-plan", "basis": args.basis,
                "count": int(len(df)), "rows": df[cols].to_dict(orient="records")}
     if args.out and args.out.endswith(".csv"):
         _dump_csv(df[cols], out=args.out)
@@ -530,8 +528,7 @@ def cmd_prep_plan(args: argparse.Namespace) -> int:
 
 def cmd_purchase_suggest(args: argparse.Namespace) -> int:
     """F-007: purchase suggestion from BOM demand."""
-    xlsx = _ensure_xlsx_from_args(args)
-    sheets = _load_sheets(xlsx)
+    sheets = _load_sheets()
     sku_qty = _load_sku_qty_from_args(args)
     if not sku_qty:
         sys.stderr.write("Error: --sku or --selections-json required for purchase-suggest\n")
@@ -539,12 +536,12 @@ def cmd_purchase_suggest(args: argparse.Namespace) -> int:
     bom_df = bom_expand_multi(sheets, sku_qty, basis=args.basis)
     purchase_df = build_purchase_list(bom_df)
     if purchase_df.empty:
-        payload = {"cmd": "purchase-suggest", "xlsx": xlsx, "basis": args.basis, "count": 0, "rows": []}
+        payload = {"cmd": "purchase-suggest", "basis": args.basis, "count": 0, "rows": []}
         _dump_json(payload, out=args.out)
         return 0
     cols = [c for c in ["order_date", "arrival_date", "material", "qty", "unit",
                          "source_skus", "is_urgent"] if c in purchase_df.columns]
-    payload = {"cmd": "purchase-suggest", "xlsx": xlsx, "basis": args.basis,
+    payload = {"cmd": "purchase-suggest", "basis": args.basis,
                "count": int(len(purchase_df)), "rows": purchase_df[cols].to_dict(orient="records")}
     if args.out and args.out.endswith(".csv"):
         _dump_csv(purchase_df[cols], out=args.out)
@@ -555,8 +552,7 @@ def cmd_purchase_suggest(args: argparse.Namespace) -> int:
 
 def cmd_coverage_estimate(args: argparse.Namespace) -> int:
     """Coverage days analysis: SKU + material coverage from BOM + inventory."""
-    xlsx = _ensure_xlsx_from_args(args)
-    sheets = _load_sheets(xlsx)
+    sheets = _load_sheets()
     sku_qty = _load_sku_qty_from_args(args)
     if not sku_qty:
         sys.stderr.write("Error: --sku or --selections-json required for coverage-estimate\n")
@@ -574,7 +570,7 @@ def cmd_coverage_estimate(args: argparse.Namespace) -> int:
     # 2. Build coverage matrix
     matrix = build_coverage_matrix(sku_dfs)
     if matrix.empty:
-        payload = {"cmd": "coverage-estimate", "xlsx": xlsx, "basis": args.basis,
+        payload = {"cmd": "coverage-estimate", "basis": args.basis,
                     "sku_coverage": [], "material_coverage": []}
         _dump_json(payload, out=args.out)
         return 0
@@ -628,7 +624,6 @@ def cmd_coverage_estimate(args: argparse.Namespace) -> int:
 
     payload = {
         "cmd": "coverage-estimate",
-        "xlsx": xlsx,
         "basis": args.basis,
         "sku_coverage": sku_rows,
         "material_coverage": mat_rows,
@@ -799,6 +794,68 @@ def cmd_inventory_sync(args: argparse.Namespace) -> int:
         "count": len(rows),
         "rows": rows,
     }
+    _dump_json(payload, out=args.out)
+    has_failed = any(r.get("status") == "failed" for r in rows)
+    return 2 if has_failed else 0
+
+
+def cmd_inventory_check_sync(args: argparse.Namespace) -> int:
+    """Upload inventory check (盘点) xlsx file(s) to Supabase."""
+    client = None if args.dry_run else get_client()
+    target = Path(args.path)
+    files = discover_check_files(target, pattern=args.pattern)
+    if args.max_files and args.max_files > 0:
+        files = files[: args.max_files]
+
+    rows: list[dict[str, Any]] = []
+    for fp in files:
+        try:
+            result = sync_check_inventory_file(client, fp, dry_run=args.dry_run)
+            rows.append(result)
+            if args.archive_dir and not args.dry_run and result.get("status") != "skipped_duplicate":
+                archive_dir = Path(args.archive_dir)
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                dst = archive_dir / fp.name
+                if dst.exists():
+                    suffix = date.today().strftime("%Y%m%d")
+                    dst = archive_dir / f"{fp.stem}.{suffix}.xlsx"
+                shutil.move(str(fp), str(dst))
+                result["archived_to"] = str(dst)
+        except InventoryCheckUploadError as exc:
+            rows.append({"file": str(fp), "status": "failed", "error": str(exc)})
+
+    payload = {"cmd": "inventory-check-sync", "count": len(rows), "rows": rows}
+    _dump_json(payload, out=args.out)
+    has_failed = any(r.get("status") == "failed" for r in rows)
+    return 2 if has_failed else 0
+
+
+def cmd_inventory_delivery_sync(args: argparse.Namespace) -> int:
+    """Upload delivery (到货) xlsx file(s) to Supabase."""
+    client = None if args.dry_run else get_client()
+    target = Path(args.path)
+    files = discover_delivery_files(target, pattern=args.pattern)
+    if args.max_files and args.max_files > 0:
+        files = files[: args.max_files]
+
+    rows: list[dict[str, Any]] = []
+    for fp in files:
+        try:
+            result = sync_delivery_file(client, fp, dry_run=args.dry_run)
+            rows.append(result)
+            if args.archive_dir and not args.dry_run and result.get("status") != "skipped_duplicate":
+                archive_dir = Path(args.archive_dir)
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                dst = archive_dir / fp.name
+                if dst.exists():
+                    suffix = date.today().strftime("%Y%m%d")
+                    dst = archive_dir / f"{fp.stem}.{suffix}.xlsx"
+                shutil.move(str(fp), str(dst))
+                result["archived_to"] = str(dst)
+        except InventoryCheckUploadError as exc:
+            rows.append({"file": str(fp), "status": "failed", "error": str(exc)})
+
+    payload = {"cmd": "inventory-delivery-sync", "count": len(rows), "rows": rows}
     _dump_json(payload, out=args.out)
     has_failed = any(r.get("status") == "failed" for r in rows)
     return 2 if has_failed else 0
@@ -1022,27 +1079,6 @@ def _set_state_xlsx(xlsx_path: str) -> None:
     store.save(state)
 
 
-def _ensure_xlsx_from_args(args: argparse.Namespace) -> str:
-    """Resolve xlsx path: CLI arg → state → error."""
-    cli_xlsx = getattr(args, "xlsx", None)
-    if cli_xlsx:
-        p = Path(cli_xlsx)
-        if p.exists():
-            return str(p.resolve())
-        sys.stderr.write(f"Error: xlsx not found: {cli_xlsx}\n")
-        raise SystemExit(1)
-    # Try state
-    store = get_store()
-    state = store.load("default")
-    xlsx = state.effective_xlsx(None)
-    if not xlsx:
-        sys.stderr.write("Error: no xlsx path. Run 'mpc state init --xlsx <path>' first.\n")
-        raise SystemExit(1)
-    p = Path(xlsx)
-    if not p.exists():
-        sys.stderr.write(f"Error: xlsx not found in state: {xlsx}\n")
-        raise SystemExit(1)
-    return xlsx
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1052,15 +1088,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     # ── validate ────────────────────────────────────────────────────────────────
-    v = sub.add_parser("validate", help="Validate workbook and emit issue report")
-    v.add_argument("xlsx", nargs="?", help="Path to 蜜可诗产品库.xlsx")
+    v = sub.add_parser("validate", help="Validate workbook data consistency against Supabase")
     v.add_argument("--out", help="Write issues CSV to path")
     v.add_argument("--format", choices=["md", "json"], default="json")
     v.set_defaults(func=cmd_validate)
 
     # ── profit-oracle ──────────────────────────────────────────────────────────
     o = sub.add_parser("profit-oracle", help="F-002: profit/margin consistency oracle")
-    o.add_argument("xlsx", nargs="?", help="Path to xlsx")
     o.add_argument("--basis", choices=["factory", "store", "both"], default="both")
     o.add_argument("--only-status", default="上线")
     o.add_argument("--margin-delta-abs", default="1e-4")
@@ -1072,7 +1106,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── sku-list ────────────────────────────────────────────────────────────────
     s = sub.add_parser("sku-list", help="F-002: list available SKU product_keys")
-    s.add_argument("xlsx", nargs="?", help="Path to xlsx")
     s.add_argument("--basis", choices=["factory", "store"], default="factory")
     s.add_argument("--only-status", default="上线")
     s.add_argument("--cost-mode", choices=["computed", "workbook"], default="computed")
@@ -1083,7 +1116,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── target-pricing ────────────────────────────────────────────────────────
     tp = sub.add_parser("target-pricing", help="F-003: target-cost reverse pricing")
-    tp.add_argument("xlsx", nargs="?", help="Path to xlsx")
     tp.add_argument("--product-key", required=True, help="SKU product_key")
     tp.add_argument("--target-margin", required=True, help="Target margin rate (e.g. 0.35)")
     tp.add_argument("--basis", choices=["factory", "store"], default="store")
@@ -1094,7 +1126,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── material-sim ──────────────────────────────────────────────────────────
     ms = sub.add_parser("material-sim", help="F-004: material price simulator")
-    ms.add_argument("xlsx", nargs="?", help="Path to xlsx")
     ms.set_defaults(func=lambda a: ms.print_help())
     sm = ms.add_subparsers(dest="subcommand")
 
@@ -1121,7 +1152,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── prep-plan ─────────────────────────────────────────────────────────────
     pr = sub.add_parser("prep-plan", help="F-006: BOM expansion → material demand")
-    pr.add_argument("xlsx", nargs="?", help="Path to xlsx")
     pr.add_argument("--basis", choices=["factory", "store"], default="store")
     pr.add_argument("--sku", action="append", default=[], help="品类|品名|规格=qty")
     pr.add_argument("--selections-json", help="JSON with selections")
@@ -1135,7 +1165,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── purchase-suggest ──────────────────────────────────────────────────────
     ps = sub.add_parser("purchase-suggest", help="F-007: purchase suggestion")
-    ps.add_argument("xlsx", nargs="?", help="Path to xlsx")
     ps.add_argument("--basis", choices=["factory", "store"], default="store")
     ps.add_argument("--sku", action="append", default=[], help="品类|品名|规格=qty")
     ps.add_argument("--selections-json", help="JSON with selections")
@@ -1145,7 +1174,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── coverage-estimate ──────────────────────────────────────────────────
     ce = sub.add_parser("coverage-estimate", help="Coverage days: SKU + material coverage from BOM + inventory")
-    ce.add_argument("xlsx", nargs="?", help="Path to xlsx")
     ce.add_argument("--basis", choices=["factory", "store"], default="store")
     ce.add_argument("--sku", action="append", default=[], help="品类|品名|规格=weekly_qty")
     ce.add_argument("--selections-json", help="JSON file with {sku_key: weekly_qty}")
@@ -1267,6 +1295,26 @@ def build_parser() -> argparse.ArgumentParser:
     ins.add_argument("--dry-run", action="store_true", help="Validate only, do not write Supabase")
     ins.add_argument("--out", help="Write JSON output to file")
     ins.set_defaults(func=cmd_inventory_sync)
+
+    # ── inventory check-sync ──────────────────────────────────────────────────
+    ics = isub.add_parser("check-sync", help="Sync inventory check (盘点) xlsx file(s) to Supabase")
+    ics.add_argument("path", help="xlsx file path, or directory to scan")
+    ics.add_argument("--pattern", default="盘点*.xlsx", help="Glob pattern for directory mode")
+    ics.add_argument("--max-files", type=int, default=0, help="Process only first N files (0 = all)")
+    ics.add_argument("--archive-dir", help="Move successfully processed files into this directory")
+    ics.add_argument("--dry-run", action="store_true", help="Validate only, do not write to Supabase")
+    ics.add_argument("--out", help="Write JSON output to file")
+    ics.set_defaults(func=cmd_inventory_check_sync)
+
+    # ── inventory delivery-sync ───────────────────────────────────────────────
+    ids = isub.add_parser("delivery-sync", help="Sync delivery (到货) xlsx file(s) to Supabase")
+    ids.add_argument("path", help="xlsx file path, or directory to scan")
+    ids.add_argument("--pattern", default="到货记录*.xlsx", help="Glob pattern for directory mode")
+    ids.add_argument("--max-files", type=int, default=0, help="Process only first N files (0 = all)")
+    ids.add_argument("--archive-dir", help="Move successfully processed files into this directory")
+    ids.add_argument("--dry-run", action="store_true", help="Validate only, do not write to Supabase")
+    ids.add_argument("--out", help="Write JSON output to file")
+    ids.set_defaults(func=cmd_inventory_delivery_sync)
 
     # ── state ─────────────────────────────────────────────────────────────────
     _add_state_subparser(sub)
