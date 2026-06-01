@@ -49,9 +49,12 @@ CHECK_FIELD_MAP = {
     "差异金额": "diff_amount",
 }
 
-# Match both "盘点单明细 YYYY年MM月DD日..." and "盘点品项导出YYYY年MM月DD日HH时MM分SS秒..."
+# Match filenames like:
+#   "盘点单明细 2026年05月25日.xlsx"
+#   "盘点品项导出2026年05月31日22时00分01秒.xlsx"
+#   "盘点单明细 2026年05月25xlsx.xlsx" (missing 日)
 CHECK_FILENAME_RE = re.compile(
-    r"盘点.+?(?P<y>\d{4})年(?P<m>\d{2})月(?P<d>\d{2})日"
+    r"盘点.+?(?P<y>\d{4})年(?P<m>\d{2})月(?P<d>\d{2})日?"
     r"(?:(?P<h>\d{2})时(?P<min>\d{2})分(?P<s>\d{2})秒)?"
 )
 

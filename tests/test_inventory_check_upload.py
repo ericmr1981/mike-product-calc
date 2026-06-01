@@ -94,6 +94,11 @@ def test_parse_check_at_from_filename():
     # Non-matching filename returns None
     assert parse_check_at_from_filename("仓库库存导出.xlsx") is None
 
+    # Filename without 日 (e.g. 盘点单明细 2026年05月25xlsx.xlsx)
+    dt3 = parse_check_at_from_filename("盘点单明细 2026年05月25xlsx.xlsx")
+    assert dt3 is not None, "Should parse filename without 日"
+    assert dt3.day == 25
+
 
 def test_parse_delivery_at_from_filename():
     from mike_product_calc.data.inventory_check_upload import parse_delivery_at_from_filename
